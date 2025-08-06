@@ -1,33 +1,38 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import type { Conversation, Message } from '$lib/types';
 
-	interface Conversation {
-		id: string;
-		title: string;
-		created_at: string;
-		updated_at: string;
-	}
+	let loadingConversations: boolean = false;
+	let loadingMessages: boolean = false;
 
-	interface Message {
-		id: string;
-		role: 'user' | 'assistant' | 'system'; // Assuming roles are either 'user' or 'assistant'
-		content: string;
-		metadatta: JSON;
-		created_at: string;
-		updated_at: string;
-		conversation_id: string; // Assuming messages are linked to conversations
-	}
-
-	let conversationList: Array<Conversation> = []; // This can be used to store the list of conversations if needed
-	let currentConversationID: string = ''; // Default value, can be updated dynamically
-
+	let conversationList: Array<Conversation> = [];
+	let currentConversationID: string = '';
 	let messageList: Array<Message> = [];
 
+	let inputMessage: string = '';
+
+	let GEMINI_API_KEY: string = '';
+	let GEMINI_MODEL: string = 'gemini-2.5-pro';
+
 	onMount(() => {
-		main();
+		loadConversations();
+		focusToInput();
+
+		// Enter key handling for input
+		const inputElement: HTMLInputElement | null = document.querySelector('#input-container input');
+		if (inputElement) {
+			inputElement.addEventListener('keydown', (event) => {
+				if (event.key === 'Enter') {
+					event.preventDefault(); // Prevent default form submission
+					handleSend(); // Call the send function
+				}
+			});
+		}
 	});
 
-	function main() {
+	const loadConversations = () => {
+		loadingConversations = true; // Set loading state
+
 		// Fetching conversations from the API
 		fetch('/api/conversation', {
 			method: 'GET',
@@ -50,10 +55,23 @@
 			})
 			.catch((error) => {
 				console.error('Error fetching conversations:', error);
+			})
+			.finally(() => {
+				loadingConversations = false; // Reset loading state
 			});
-	}
+	};
 
-	const updateMessageList = (conversationID: string) => {
+	const focusToInput = () => {
+		// Focus the input field when the component mounts
+		const inputElement: HTMLInputElement | null = document.querySelector('#input-container input');
+		if (inputElement) {
+			inputElement.focus();
+		}
+	};
+
+	const updateMessageList = (conversationID: string = currentConversationID) => {
+		loadingMessages = true; // Set loading state for messages
+
 		// Fetching messages for a specific conversation
 		fetch(`/api/message/${conversationID}`, {
 			method: 'GET',
@@ -68,7 +86,30 @@
 			})
 			.catch((error) => {
 				console.error('Error fetching messages:', error);
+			})
+			.finally(() => {
+				loadingMessages = false; // Reset loading state
 			});
+	};
+
+	const handleSend = () => {
+		inputMessage = inputMessage.trim();
+		if (!inputMessage) {
+			// If the input is empty, do nothing
+			return;
+		}
+
+		// Plan
+		// - // Add it into messageList, send it to the llm api, then append it to the DB
+		const newMessage: Message = {
+			id: crypto.randomUUID(), // Generate a unique ID for the message
+			conversation_id: currentConversationID,
+			role: 'user',
+			content: inputMessage
+		};
+		messageList = [...messageList, newMessage]; // Add the new message to the message list
+		inputMessage = ''; // Clear the input field
+		focusToInput(); // Refocus the input field
 	};
 </script>
 
@@ -76,43 +117,59 @@
 <div id="app">
 	<!-- Main application container -->
 	<div id="header">
+		<p>{loadingConversations ? 'Loading conversations...' : 'Chat:'}</p>
 		<select
 			bind:value={currentConversationID}
-			on:change={() => updateMessageList(currentConversationID)}
+			onchange={() => updateMessageList(currentConversationID)}
 		>
 			{#each conversationList as conversation}
 				<option value={conversation.id}>{conversation.title}</option>
-				<!-- Assuming each conversation has 'id' and 'title' -->
 			{/each}
 		</select>
+		<span class="vertical-line"></span>
+
+		<button onclick={() => loadConversations()}>Reload Conversations</button>
+		<button onclick={() => updateMessageList(currentConversationID)}>Reload Messages</button>
+
+		<!-- Vertical line -->
+		<span class="vertical-line"></span>
+
+		<details>
+			<summary>LLM</summary>
+			<input type="password" placeholder="API_KEY" bind:value={GEMINI_API_KEY} />
+			<select bind:value={GEMINI_MODEL}>
+				{#each ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'] as model}
+					<option value={model}>{model}</option>
+				{/each}
+				<!-- Add more options as needed -->
+			</select>
+		</details>
 	</div>
 
 	<div id="message-container">
-		{#each messageList as message}
-			<div class="{message.role} message">{message.content}</div>
-		{/each}
-
-		<div class="user message">A</div>
-		<div class="assistant message">B</div>
-		<div class="system message">
-			This is kinda long message that might need to be wrapped properly to fit within the container.
-			I don't know how long it will be, but it should be able to handle long messages without
-			breaking the layout.
-		</div>
-		<div class="error message">Error: Failed to load messages</div>
-		<div class="loading message">Loading messages...</div>
+		{#if loadingMessages}
+			<h1 style="margin: auto;">Loading messages...</h1>
+		{:else}
+			{#each messageList as message}
+				<div class="{message.role} message">{message.content}</div>
+			{/each}
+		{/if}
 	</div>
-
-	<!-- <button on:click={main}> Refresh Conversations </button> -->
 
 	<div id="input-container">
 		<button>+</button>
-		<input type="text" placeholder="메시지 입력" />
-		<button>&#x27A4;</button>
+		<input type="text" placeholder="메시지 입력" bind:value={inputMessage} />
+		<button onclick={() => handleSend()}>&#x27A4;</button>
 	</div>
 </div>
 
 <style>
+	.vertical-line {
+		border-left: 1px solid #ccc;
+		height: 20px;
+		margin: 0 10px;
+	}
+
 	#app {
 		font-family: Arial, sans-serif;
 		max-width: 800px;
@@ -132,6 +189,20 @@
 	}
 
 	#header {
+		display: flex;
+		flex-direction: row;
+		flex-wrap: wrap;
+
+		gap: 10px;
+		align-items: center;
+		justify-content: left;
+		width: 100%;
+		height: auto;
+
+		border: 1px solid #ccc;
+		border-radius: 4px;
+		padding: 3px;
+		background-color: #e9ecef;
 	}
 
 	#message-container {

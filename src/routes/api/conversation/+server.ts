@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from '@sveltejs/kit';
-import pool from '../db'; // Adjust the import path as necessary
+import pool from '$lib/db'; // Adjust the import path as necessary
 
 /*
  * GET request handler for fetching conversations.
