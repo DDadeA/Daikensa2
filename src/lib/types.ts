@@ -8,7 +8,7 @@ export interface Conversation {
 export interface Message {
 	id?: string;
 	conversation_id: string; // Assuming messages are linked to conversations
-	role: 'user' | 'assistant' | 'system'; // Assuming roles are either 'user' or 'assistant'
+	role: 'user' | 'model' | 'system'; // Assuming roles are either 'user' or 'model'
 	content: string;
 	metadata?: JSON;
 	created_at?: string;

@@ -2,6 +2,9 @@
 	import { onMount } from 'svelte';
 	import type { Conversation, Message } from '$lib/types';
 
+	import { GoogleGenAI, HarmBlockMethod, HarmBlockThreshold, HarmCategory } from '@google/genai';
+	import type { Part, Content } from '@google/genai';
+
 	let loadingConversations: boolean = false;
 	let loadingMessages: boolean = false;
 
@@ -13,6 +16,9 @@
 
 	let GEMINI_API_KEY: string = '';
 	let GEMINI_MODEL: string = 'gemini-2.5-pro';
+	let GEMINI_TEMPERATURE: number = 0.95;
+	let GEMINI_THINKING: boolean = true;
+	let GEMINI_THINKING_BUDGET: number = 1024;
 
 	onMount(() => {
 		loadConversations();
@@ -92,6 +98,14 @@
 			});
 	};
 
+	let isMessageStreaming = false; // Placeholder for streaming state
+	const streamingMessage: Message = {
+		id: '',
+		conversation_id: '',
+		role: 'model',
+		content: ''
+	}; // Placeholder for streaming message
+
 	const handleSend = () => {
 		inputMessage = inputMessage.trim();
 		if (!inputMessage) {
@@ -108,8 +122,104 @@
 			content: inputMessage
 		};
 		messageList = [...messageList, newMessage]; // Add the new message to the message list
+
+		// POST the new message to the API
+		fetch(`/api/message`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify(newMessage)
+		})
+			.then((response) => response.json())
+			.then((data) => {
+				console.log('Message sent:', data);
+				// Optionally, you can handle the response here
+			})
+			.catch((error) => {
+				console.error('Error sending message:', error);
+			});
+
 		inputMessage = ''; // Clear the input field
 		focusToInput(); // Refocus the input field
+
+		// Send the message to the LLM API
+		const ai = new GoogleGenAI({
+			apiKey: GEMINI_API_KEY
+		});
+
+		// -- // Create entire context for the LLM API from the messageList
+		const context: Content[] = messageList.map((msg) => ({
+			role: msg.role === 'model' ? 'model' : 'user',
+			parts: [{ text: msg.content } as Part]
+		}));
+
+		isMessageStreaming = true; // Set streaming state to true
+		streamingMessage.content = ''; // Clear the streaming message content
+		streamingMessage.conversation_id = currentConversationID; // Set the conversation ID for the streaming message
+		streamingMessage.role = 'model'; // Set the role for the streaming message
+		streamingMessage.id = crypto.randomUUID(); // Generate a unique ID for the streaming message
+
+		ai.models
+			.generateContentStream({
+				model: GEMINI_MODEL,
+				config: {
+					temperature: GEMINI_TEMPERATURE,
+					safetySettings: [
+						HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
+						HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+						HarmCategory.HARM_CATEGORY_HARASSMENT,
+						HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+						HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT
+					].map((category) => ({
+						category,
+						threshold: HarmBlockThreshold.OFF
+					})),
+					thinkingConfig: {
+						includeThoughts: true,
+						thinkingBudget: GEMINI_THINKING ? GEMINI_THINKING_BUDGET : 0
+					}
+				},
+				contents: context
+			})
+			.then(async (response) => {
+				for await (const chunk of response) {
+					if (chunk.text) {
+						console.log('Received chunk:', chunk.text);
+						streamingMessage.content += chunk.text; // Append the chunk text to the streaming message
+					}
+				}
+
+				isMessageStreaming = false; // Set streaming state to false after the response is complete
+				// Append the streaming message to the message list
+				messageList = [...messageList, { ...streamingMessage }];
+
+				return { ...streamingMessage };
+			})
+			.then((finalMessage) => {
+				// POST the final message to the API
+				fetch(`/api/message`, {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json'
+					},
+					body: JSON.stringify(finalMessage)
+				})
+					.then((response) => response.json())
+					.then((data) => {
+						console.log('Final message sent:', data);
+						// Optionally, you can handle the response here
+
+						console.log('Message list updated:', messageList);
+					})
+					.catch((error) => {
+						console.error('Error sending final message:', error);
+					});
+			})
+			.catch((error) => {
+				console.error('Error generating content stream:', error);
+				isMessageStreaming = false; // Reset streaming state on error
+			});
 	};
 </script>
 
@@ -134,15 +244,39 @@
 		<!-- Vertical line -->
 		<span class="vertical-line"></span>
 
-		<details>
+		<details style="">
 			<summary>LLM</summary>
-			<input type="password" placeholder="API_KEY" bind:value={GEMINI_API_KEY} />
-			<select bind:value={GEMINI_MODEL}>
-				{#each ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'] as model}
-					<option value={model}>{model}</option>
-				{/each}
-				<!-- Add more options as needed -->
-			</select>
+			<div id="llm-settings">
+				<select bind:value={GEMINI_MODEL}>
+					{#each ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'] as model}
+						<option value={model}>{model}</option>
+					{/each}
+				</select>
+				<span class="vertical-line"></span>
+				<label for="thinking-checkbox">Thinking</label>
+				<input type="checkbox" id="thinking-checkbox" bind:checked={GEMINI_THINKING} />
+				<input
+					type="number"
+					placeholder="Thinking Budget"
+					bind:value={GEMINI_THINKING_BUDGET}
+					min="128"
+					max="32768"
+					step="1"
+				/>
+
+				<span class="vertical-line"></span>
+				<span>Temp: {GEMINI_TEMPERATURE}</span>
+				<input
+					type="range"
+					placeholder="Temperature"
+					bind:value={GEMINI_TEMPERATURE}
+					min="0"
+					max="1"
+					step="0.01"
+				/>
+				<br />
+				<input type="password" placeholder="API_KEY" bind:value={GEMINI_API_KEY} />
+			</div>
 		</details>
 	</div>
 
@@ -153,6 +287,15 @@
 			{#each messageList as message}
 				<div class="{message.role} message">{message.content}</div>
 			{/each}
+		{/if}
+		{#if isMessageStreaming}
+			<div class="model message">
+				{#if streamingMessage.content}
+					{streamingMessage.content}
+				{:else}
+					<span>Streaming...</span>
+				{/if}
+			</div>
 		{/if}
 	</div>
 
@@ -201,8 +344,18 @@
 
 		border: 1px solid #ccc;
 		border-radius: 4px;
-		padding: 3px;
+		padding: 10px;
 		background-color: #e9ecef;
+	}
+
+	#llm-settings {
+		width: 90%;
+		display: flex;
+		flex-direction: row;
+		flex-wrap: wrap;
+		gap: 10px;
+
+		padding: 10px;
 	}
 
 	#message-container {

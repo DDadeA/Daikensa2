@@ -31,19 +31,24 @@ export const GET: RequestHandler = async ({ url, params }) => {
 	}
 };
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, params }) => {
 	// Handle POST request
 	try {
 		const body = await request.json();
-		const { conversation_id, content, role, metadata } = body as Message;
+		const { id, content, role, metadata } = body as Message;
 
-		if (!conversation_id || !content || !role) {
-			return json({ error: 'Conversation ID, content, and role are required' }, { status: 400 });
+		const conversation_id = params?.conversationID;
+
+		if (!id || !conversation_id || !content || !role) {
+			return json(
+				{ error: 'ID, Conversation ID, content, and role are required' },
+				{ status: 400 }
+			);
 		}
 
 		const res = await pool.query(
-			'INSERT INTO messages (conversation_id, content, role, metadata) VALUES ($1, $2, $3, $4) RETURNING *',
-			[conversation_id, content, role, metadata ? JSON.stringify(metadata) : null]
+			'INSERT INTO messages (id, conversation_id, content, role, metadata) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+			[id, conversation_id, content, role, metadata ? JSON.stringify(metadata) : null]
 		);
 
 		const newMessage = res.rows[0];
