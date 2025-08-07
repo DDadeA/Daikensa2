@@ -10,7 +10,7 @@ export interface Message {
 	conversation_id: string; // Assuming messages are linked to conversations
 	role: 'user' | 'model' | 'system'; // Assuming roles are either 'user' or 'model'
 	content: string;
-	metadata?: JSON;
+	metadata?: any;
 	created_at?: string;
 	updated_at?: string;
 }
