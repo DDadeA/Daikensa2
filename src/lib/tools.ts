@@ -13,7 +13,8 @@ const alertTool: Tool = {
 		{
 			behavior: Behavior.BLOCKING,
 			name: 'alert',
-			description: 'Display an alert message and return a confirmation.',
+			description:
+				'Display an alert message and return a confirmation. Please do not use in normal conversation, this is just for testing purposes.',
 			parameters: {
 				type: Type.OBJECT,
 				properties: {
@@ -35,4 +36,4 @@ export const actualTool = {
 	}
 };
 
-export const tools = [alertTool];
+export const tools = []; //[alertTool];

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import type { Conversation, Message } from '$lib/types';
 	import MessageElement from '$lib/components/MessageElement.svelte';
 
@@ -14,6 +14,7 @@
 	import type { Part, Content } from '@google/genai';
 
 	import { toolConfig, tools, actualTool } from '$lib/tools';
+	import { streamingText } from '$lib/stores';
 
 	let loadingConversations: boolean = false;
 	let loadingMessages: boolean = false;
@@ -24,6 +25,7 @@
 	let messageList: Array<Message> = [];
 
 	let inputMessage: string = '';
+	// let streamingText: string = ''; // Placeholder for streaming text
 
 	let GEMINI_API_KEY: string;
 	let GEMINI_MODEL: string;
@@ -31,6 +33,8 @@
 	let GEMINI_THINKING: boolean;
 	let GEMINI_THINKING_BUDGET: number;
 	let GEMINI_SYSTEM_PROMPT: string;
+
+	let currentTheme: 'light' | 'dark' = 'light';
 
 	const initializeFromLocalStorage = () => {
 		GEMINI_API_KEY = localStorage.getItem('GEMINI_API_KEY') || '';
@@ -40,6 +44,27 @@
 		GEMINI_THINKING_BUDGET = parseInt(localStorage.getItem('GEMINI_THINKING_BUDGET') || '512', 10);
 		GEMINI_SYSTEM_PROMPT =
 			localStorage.getItem('GEMINI_SYSTEM_PROMPT') || 'You are a helpful assistant.';
+		currentTheme = (localStorage.getItem('theme') as 'light' | 'dark') || 'light';
+		applyTheme(currentTheme);
+	};
+
+	const applyTheme = (theme: 'light' | 'dark') => {
+		document.documentElement.setAttribute('data-theme', theme);
+	};
+
+	const toggleTheme = () => {
+		currentTheme = currentTheme === 'light' ? 'dark' : 'light';
+		localStorage.setItem('theme', currentTheme);
+		applyTheme(currentTheme);
+	};
+
+	const randomUUID = () => {
+		// crypto.randomUUID() not works
+		return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+			const r = (Math.random() * 16) | 0;
+			const v = c === 'x' ? r : (r & 0x3) | 0x8;
+			return v.toString(16);
+		});
 	};
 
 	onMount(() => {
@@ -145,8 +170,18 @@
 		})
 			.then((response) => response.json())
 			.then((data) => {
-				console.log('Messages for conversation:', conversationID, data);
-				messageList = data.rows; // Assuming the response is an array of messages
+				messageList = data.rows.sort(
+					(a, b) =>
+						new Date(a.created_at.slice(0, 23)).getTime() -
+						new Date(b.created_at.slice(0, 23)).getTime()
+				); // Assuming the response is an array of messages
+				// Sort messages by timestamp if available
+				// if (messageList.length > 0) {
+				// 	messageList = messageList.sort(
+				// 		(a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+				// 	);
+				// }
+				console.log('Messages for conversation:', conversationID, messageList);
 			})
 			.catch((error) => {
 				console.error('Error fetching messages:', error);
@@ -157,13 +192,14 @@
 			});
 	};
 
-	const streamingMessage: Message = {
+	let streamingMessage: Message = {
 		id: '',
 		conversation_id: '',
 		role: 'model',
-		content: ''
+		parts: []
 	}; // Placeholder for streaming message
 
+	let AUTO_TIMESTAMP: boolean = true; // Auto timestamp toggle
 	const handleSend = () => {
 		if (isMessageStreaming) {
 			console.warn('Message is currently being streamed. Please wait.');
@@ -171,14 +207,28 @@
 		}
 
 		inputMessage = inputMessage.trim();
+
+		if (AUTO_TIMESTAMP) {
+			// KST
+			const timestamp = new Date()
+				.toLocaleString('ko-KR', {
+					timeZone: 'Asia/Seoul'
+				})
+				.replaceAll('. ', '.')
+				.replace('오전', 'AM')
+				.replace('오후', 'PM'); // Get current timestamp in KST
+			inputMessage = `${timestamp}\n${inputMessage}`; // Prepend timestamp to the message
+		}
+
 		if (inputMessage) {
 			// Plan
 			// - // Add it into messageList, send it to the llm api, then append it to the DB
+			// alert(randomUUID());
 			const newMessage: Message = {
-				id: crypto.randomUUID(), // Generate a unique ID for the message
+				id: randomUUID(), // Generate a unique ID for the message
 				conversation_id: currentConversationID,
 				role: 'user',
-				content: inputMessage
+				parts: [{ text: inputMessage }]
 			};
 			messageList = [...messageList, newMessage]; // Add the new message to the message list
 			scrollToBottom();
@@ -214,38 +264,24 @@
 		});
 
 		// -- // Create entire context for the LLM API from the messageList
-
 		let context: Content[] = [];
 
+		// Create context from messageList
 		for (const message of messageList) {
-			switch (message.role) {
-				case 'model':
-					context.push({
-						role: 'model',
-						parts: [{ text: message.content } as Part, ...(message.metadata?.parts || [])]
-					});
-					break;
-				case 'user':
-					context.push({
-						role: 'user',
-						parts: [
-							message.content && !(message.content === '')
-								? ({ text: message.content } as Part)
-								: {},
-							...(message.metadata?.parts || [])
-						]
-					});
-					break;
-				default:
-					console.warn(`Unknown message role: ${message.role}`);
-			}
+			context.push({
+				role: message.role,
+				parts: message.parts
+			});
 		}
 
+		console.log('target context', context);
+
 		isMessageStreaming = true; // Set streaming state to true
-		streamingMessage.content = ''; // Clear the streaming message content
 		streamingMessage.conversation_id = currentConversationID; // Set the conversation ID for the streaming message
 		streamingMessage.role = 'model'; // Set the role for the streaming message
-		streamingMessage.id = crypto.randomUUID(); // Generate a unique ID for the streaming message
+		streamingMessage.id = randomUUID(); // Generate a unique ID for the streaming message
+		streamingMessage.parts = []; // Initialize parts for the streaming message
+		$streamingText = ''; // Reset streaming text
 
 		const response = await ai.models.generateContentStream({
 			model: GEMINI_MODEL,
@@ -271,50 +307,68 @@
 			},
 			contents: context
 		});
-
-		const chunks = [];
-		const metadata = {
-			parts: [] as Part[]
-		};
-
 		for await (const chunk of response) {
 			if (!chunk) {
 				console.warn('Received empty chunk');
 				continue;
 			}
-			chunks.push(chunk); // Collect chunks for further processing
-			console.log('Received chunk:', chunk);
+
+			if (!(chunk.candidates && chunk.candidates.length > 0)) {
+				console.warn('No candidates found in the chunk');
+				continue; // Skip if no candidates are found
+			}
+
+			// If the chunk contains candidates, process the first candidate
+			const candidate = chunk.candidates[0];
+
+			if (!(candidate.content && candidate.content.parts && candidate.content.parts.length > 0)) {
+				console.warn('No content parts found in the candidate');
+				continue;
+			}
+
+			for (let part of candidate.content.parts) {
+				// Remove thoughtSignature
+				if (part.thoughtSignature) {
+					delete part.thoughtSignature; // Remove thoughtSignature from the part
+				}
+				// If part.text is not empty, append it to the streaming message
+				streamingMessage.parts.push(part); // Append each part to the streaming message
+
+				if (part.text) {
+					$streamingText += part.text; // Append text to streamingText if it exists
+					// Force Svelte to trigger reactivity and update DOM
+					// await tick();
+				}
+			}
 
 			// scroll to streaming message
 			scrollToBottom();
-
-			if (chunk.candidates && chunk.candidates.length > 0) {
-				// If the chunk contains candidates, process the first candidate
-				const candidate = chunk.candidates[0];
-				if (candidate.content && candidate.content.parts && candidate.content.parts.length > 0) {
-					// Append the text part of the content to the streaming message
-					// streamingMessage.content += candidate.content.parts[0].text;
-					for (const part of candidate.content.parts) {
-						// If part.text is not empty, append it to the streaming message
-						if (part.text && part.text.trim() !== '') {
-							streamingMessage.content += part.text; // Append each part's text
-						}
-
-						// If other parts exists, add it to the metadata.parts
-						if (part.functionCall) {
-							metadata.parts.push({
-								functionCall: part.functionCall
-							});
-						}
-					}
-				}
-			}
 		}
-
-		streamingMessage.metadata = metadata as any; // Assign the metadata to the streaming message
-
 		// Streaming complete
 		isMessageStreaming = false;
+
+		// Remove thoughtSignature
+
+		// Merging text parts in streamingMessage parts
+		// -- // Filter if any text part
+		const textParts = streamingMessage.parts.filter((part) => part.text);
+
+		if (textParts.length > 0) {
+			const MergedText = textParts.map((part) => part.text).join('');
+
+			// Find the first text part and update its text
+			const firstTextPart = streamingMessage.parts.find((part) => part.text);
+			if (firstTextPart) {
+				firstTextPart.text = MergedText; // Update the text of the first text part
+			} else {
+				console.warn('No text part found to update with merged text');
+			}
+
+			// Remove all other text parts
+			streamingMessage.parts = streamingMessage.parts.filter(
+				(part) => !part.text || part === firstTextPart
+			);
+		}
 		messageList = [...messageList, { ...streamingMessage }];
 
 		const postOriginalPromise = fetch(`/api/message`, {
@@ -327,68 +381,69 @@
 
 		// If functionCall is present, handle it
 
-		// if (metadata.parts.length > 0) {
-		for (const part of metadata?.parts) {
-			if (!part.functionCall?.name) {
-				continue;
-			}
+		// if (parts.parts.length > 0) {
+		// for (const part of parts?.parts) {
+		// 	if (!part.functionCall?.name) {
+		// 		continue;
+		// 	}
 
-			console.log('Function call detected:', part.functionCall);
-			// Handle the function call here, e.g., execute the function or log it
+		// 	console.log('Function call detected:', part.functionCall);
+		// 	// Handle the function call here, e.g., execute the function or log it
 
-			const functionName = part.functionCall.name as keyof typeof actualTool;
-			if (!actualTool[functionName]) {
-				console.error(`Function ${functionName} is not defined in actualTool`);
-				continue; // Skip if the function is not defined
-			}
+		// 	const functionName = part.functionCall.name as keyof typeof actualTool;
+		// 	if (!actualTool[functionName]) {
+		// 		console.error(`Function ${functionName} is not defined in actualTool`);
+		// 		continue; // Skip if the function is not defined
+		// 	}
 
-			//@ts-ignore
-			const toolResult = await actualTool[functionName](part.functionCall.args);
-			console.log('Function call result:', toolResult);
-			// You can handle the result here, e.g., send it back to the LLM or log it
+		// 	//@ts-ignore
+		// 	const toolResult = await actualTool[functionName](part.functionCall.args);
+		// 	console.log('Function call result:', toolResult);
+		// 	// You can handle the result here, e.g., send it back to the LLM or log it
 
-			// Append the result to the streaming message content
-			const resultMessage: Message = {
-				id: crypto.randomUUID(),
-				conversation_id: currentConversationID,
-				role: 'user',
-				content: '',
-				metadata: {
-					parts: [
-						{
-							functionResponse: {
-								name: functionName,
-								response: {
-									output: toolResult
-								}
-							}
-						}
-					]
-				}
-			};
+		// 	// Append the result to the streaming message content
+		// 	const resultMessage: Message = {
+		// 		id: randomUUID(),
+		// 		conversation_id: currentConversationID,
+		// 		role: 'user',
+		// 		content: '',
+		// 		metadata: {
+		// 			parts: [
+		// 				{
+		// 					functionResponse: {
+		// 						name: functionName,
+		// 						response: {
+		// 							output: toolResult
+		// 						}
+		// 					}
+		// 				}
+		// 			]
+		// 		}
+		// 	};
 
-			messageList = [...messageList, { ...resultMessage }];
+		// 	messageList = [...messageList, { ...resultMessage }];
 
-			// POST the result message to the API
-			await postOriginalPromise; // Ensure the original message is posted first
+		// 	// POST the result message to the API
+		// 	await postOriginalPromise; // Ensure the original message is posted first
 
-			fetch(`/api/message`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json'
-				},
-				body: JSON.stringify(resultMessage)
-			});
+		// 	fetch(`/api/message`, {
+		// 		method: 'POST',
+		// 		headers: {
+		// 			'Content-Type': 'application/json'
+		// 		},
+		// 		body: JSON.stringify(resultMessage)
+		// 	});
 
-			handleAPI(); // Call the API handler to process the result message
-		}
+		// 	handleAPI(); // Call the API handler to process the result message
+		// }
 	};
 </script>
 
 <title>ONLY DAIKENSA V2</title>
 <div id="app">
 	<!-- Main application container -->
-	<div id="header">
+	<details id="header">
+		<summary>{conversationList.find((convo) => convo.id === currentConversationID)?.title}</summary>
 		<p>{loadingConversations ? 'Loading conversations...' : 'Chat:'}</p>
 		<select
 			bind:value={currentConversationID}
@@ -400,18 +455,25 @@
 		</select>
 		<span class="vertical-line"></span>
 
-		<button onclick={() => loadConversations()} ontouchstart={() => loadConversations()}
-			>Reload Conversations</button
-		>
-		<button
-			onclick={() => updateMessageList(currentConversationID)}
-			ontouchstart={() => updateMessageList(currentConversationID)}>Reload Messages</button
-		>
+		<button onclick={() => loadConversations()}>Reload Conversations</button>
+		<button onclick={() => updateMessageList(currentConversationID)}>Reload Messages</button>
 
-		<!-- Vertical line -->
 		<span class="vertical-line"></span>
+		<details>
+			<summary>Options</summary>
+			<div style="display: flex; flex-direction: row; align-items: center;">
+				<button onclick={() => toggleTheme()}>
+					{currentTheme === 'light' ? '🌙' : '☀️'}
+				</button>
 
-		<details style="">
+				<span class="vertical-line"></span>
+				<label for="auto-timestamp">Auto Timestamp</label>
+				<input id="auto-timestamp" type="checkbox" bind:checked={AUTO_TIMESTAMP} />
+			</div>
+		</details>
+
+		<span class="vertical-line"></span>
+		<details>
 			<summary>LLM</summary>
 			<div id="llm-settings">
 				<select
@@ -467,7 +529,7 @@
 				<br />
 			</div>
 		</details>
-	</div>
+	</details>
 
 	<div id="message-container">
 		{#if loadingMessages}
@@ -495,7 +557,7 @@
 		{/if}
 		{#if isMessageStreaming}
 			<div class="model message">
-				<MessageElement message={streamingMessage} deleteMessage={() => {}} />
+				<MessageElement message={streamingMessage} isStreaming={true} />
 			</div>
 		{/if}
 	</div>
@@ -503,26 +565,66 @@
 	<div id="input-container">
 		<button>+</button>
 		<textarea placeholder="메시지 입력" bind:value={inputMessage}></textarea>
-		<button
-			id="send-button"
-			onclick={() => handleSend()}
-			ontouchstart={() => {
-				handleSend();
-				alert('Message sent!');
-			}}
-			aria-label="Send message"
-		>
+		<button id="send-button" onclick={() => handleSend()} aria-label="Send message">
 			<span
-				style="content: url('https://api.iconify.design/line-md/arrow-right-square.svg'); width: 24px; height: 24px; display: inline-block;"
-				>→</span
+				style="content: url('https://api.iconify.design/line-md/arrow-right-square.svg'); width: 24px; height: 24px; display: inline-block; filter: {currentTheme ===
+				'dark'
+					? 'invert(1)'
+					: 'invert(0)'};">→</span
 			>
 		</button>
 	</div>
 </div>
 
 <style>
+	:global(:root) {
+		/* Light theme colors */
+		--bg-primary: #f9f9f9;
+		--bg-secondary: #fff;
+		--bg-tertiary: #e9ecef;
+		--bg-hover: #f8f9fa;
+		--bg-active: #e9ecef;
+
+		--text-primary: #212529;
+		--text-secondary: #495057;
+		--text-muted: #6c757d;
+
+		--border-primary: #ccc;
+		--border-secondary: #dee2e6;
+
+		--shadow-light: rgba(0, 0, 0, 0.1);
+		--shadow-medium: rgba(0, 0, 0, 0.15);
+	}
+
+	:global([data-theme='dark']) {
+		/* Dark theme colors */
+		--bg-primary: #1a1a1a;
+		--bg-secondary: #2d2d2d;
+		--bg-tertiary: #404040;
+		--bg-hover: #3a3a3a;
+		--bg-active: #4a4a4a;
+
+		--text-primary: #ffffff;
+		--text-secondary: #e0e0e0;
+		--text-muted: #a0a0a0;
+
+		--border-primary: #555;
+		--border-secondary: #666;
+
+		--shadow-light: rgba(255, 255, 255, 0.1);
+		--shadow-medium: rgba(255, 255, 255, 0.15);
+	}
+
+	:global(body) {
+		background-color: var(--bg-primary);
+		color: var(--text-primary);
+		transition:
+			background-color 0.3s ease,
+			color 0.3s ease;
+	}
+
 	.vertical-line {
-		border-left: 1px solid #ccc;
+		border-left: 1px solid var(--border-primary);
 		height: 20px;
 		margin: 0 10px;
 	}
@@ -536,13 +638,19 @@
 
 		margin: 0 auto;
 		padding: 20px;
-		border: 1px solid #ccc;
+		border: 1px solid var(--border-primary);
 		border-radius: 8px;
 
-		background-color: #f9f9f9;
+		background-color: var(--bg-primary);
+		color: var(--text-primary);
 
 		display: flex;
 		flex-direction: column;
+
+		transition:
+			background-color 0.3s ease,
+			color 0.3s ease,
+			border-color 0.3s ease;
 	}
 
 	#header {
@@ -553,41 +661,55 @@
 		gap: 10px;
 		align-items: center;
 		justify-content: left;
-		width: 100%;
+		width: calc(100% - 20px);
 		height: auto;
 
-		border: 1px solid #ccc;
+		border: 1px solid var(--border-primary);
 		border-radius: 4px;
 		padding: 10px;
-		background-color: #e9ecef;
+		background-color: var(--bg-tertiary);
+		color: var(--text-primary);
+
+		transition:
+			background-color 0.3s ease,
+			border-color 0.3s ease;
 	}
 
 	#header button {
 		min-height: 44px; /* Minimum touch target size for mobile */
 		padding: 8px 12px;
-		border: 1px solid #ccc;
+		border: 1px solid var(--border-primary);
 		border-radius: 4px;
-		background-color: #fff;
+		background-color: var(--bg-secondary);
+		color: var(--text-primary);
 		cursor: pointer;
-		transition: background-color 0.2s;
+		transition:
+			background-color 0.3s ease,
+			color 0.3s ease,
+			border-color 0.3s ease;
 		font-size: 14px;
 	}
 
 	#header button:hover {
-		background-color: #f8f9fa;
+		background-color: var(--bg-hover);
 	}
 
 	#header button:active {
-		background-color: #e9ecef;
+		background-color: var(--bg-active);
 	}
 
 	#header select {
 		min-height: 44px; /* Minimum touch target size for mobile */
 		padding: 8px;
-		border: 1px solid #ccc;
+		border: 1px solid var(--border-primary);
 		border-radius: 4px;
-		background-color: #fff;
+		background-color: var(--bg-secondary);
+		color: var(--text-primary);
 		font-size: 14px;
+		transition:
+			background-color 0.3s ease,
+			color 0.3s ease,
+			border-color 0.3s ease;
 	}
 
 	#llm-settings {
@@ -600,16 +722,37 @@
 		padding: 10px;
 	}
 
+	#llm-settings input,
+	#llm-settings textarea,
+	#llm-settings select {
+		background-color: var(--bg-secondary);
+		color: var(--text-primary);
+		border: 1px solid var(--border-primary);
+		border-radius: 4px;
+		transition:
+			background-color 0.3s ease,
+			color 0.3s ease,
+			border-color 0.3s ease;
+	}
+
+	#llm-settings input:focus,
+	#llm-settings textarea:focus,
+	#llm-settings select:focus {
+		outline: 2px solid var(--border-secondary);
+		outline-offset: 2px;
+	}
+
 	#message-container {
 		flex-grow: 1;
 		overflow-y: scroll;
 		margin-top: 20px;
 
 		padding: 10px;
-		border: 1px solid #ccc;
+		border: 1px solid var(--border-primary);
 		border-radius: 4px;
 
-		background-color: #fff;
+		background-color: var(--bg-secondary);
+		color: var(--text-primary);
 
 		display: flex;
 		flex-direction: column;
@@ -617,6 +760,11 @@
 
 		font-size: 14px;
 		line-height: 1.5;
+
+		transition:
+			background-color 0.3s ease,
+			color 0.3s ease,
+			border-color 0.3s ease;
 	}
 
 	#input-container {
@@ -634,29 +782,44 @@
 			flex-grow: 1;
 			margin: 10px;
 			padding: 8px;
-			border: 1px solid #ccc;
+			border: 1px solid var(--border-primary);
 			border-radius: 4px;
 			font-size: 16px; /* Prevents zoom on iOS */
 			resize: none;
+			background-color: var(--bg-secondary);
+			color: var(--text-primary);
+			transition:
+				background-color 0.3s ease,
+				color 0.3s ease,
+				border-color 0.3s ease;
+		}
+
+		& > textarea:focus {
+			outline: 2px solid var(--border-secondary);
+			outline-offset: 2px;
 		}
 
 		& > button {
 			min-height: 44px; /* Minimum touch target size for mobile */
 			min-width: 44px;
 			padding: 8px;
-			border: 1px solid #ccc;
+			border: 1px solid var(--border-primary);
 			border-radius: 4px;
-			background-color: #fff;
+			background-color: var(--bg-secondary);
+			color: var(--text-primary);
 			cursor: pointer;
-			transition: background-color 0.2s;
+			transition:
+				background-color 0.3s ease,
+				color 0.3s ease,
+				border-color 0.3s ease;
 		}
 
 		& > button:hover {
-			background-color: #f8f9fa;
+			background-color: var(--bg-hover);
 		}
 
 		& > button:active {
-			background-color: #e9ecef;
+			background-color: var(--bg-active);
 		}
 	}
 
@@ -666,15 +829,16 @@
 		cursor: pointer;
 		padding: 5px;
 		border-radius: 4px;
-		transition: background-color 0.2s;
+		transition: background-color 0.3s ease;
+		color: var(--text-primary);
 	}
 
 	#send-button:hover {
-		background-color: #e9ecef;
+		background-color: var(--bg-tertiary);
 	}
 
 	#send-button:active {
-		background-color: #dee2e6;
+		background-color: var(--bg-active);
 	}
 
 	/* ------- */

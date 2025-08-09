@@ -1,54 +1,50 @@
-<script>
+<script lang="ts">
 	import { marked } from 'marked';
+	import { streamingText } from '$lib/stores';
+	import type { Message } from '$lib/types';
 
-	export let message;
-	export let deleteMessage;
-	export let isStreaming;
-
-	// console.log('MessageElement Parts', message.metadata?.parts);
+	export let message: Message;
+	export let deleteMessage = () => {};
+	export let isStreaming = false;
+	// export let streamingText: string = '';
 </script>
 
 <div id={message.id} class="{message.role} message">
 	{#if message.role === 'model'}
 		<span class="message-content">
-			{#if message.content == ''}
-				{#if message.metadata?.parts.length > 0}
-					{#each message.metadata?.parts as part}
-						{#if part.functionCall}
-							<code
-								>Function {part.functionCall.name}({JSON.stringify(part.functionCall.args)})</code
-							>
-						{:else}
-							?
-						{/if}
-					{/each}
-				{:else}
-					-
-				{/if}
-			{:else}
-				{@html marked.parse(message.content)}
+			{#if isStreaming && $streamingText.length > 0}
+				{@html marked.parse($streamingText || '')}
+			{:else if isStreaming}
+				<span class="thinking"></span>
+			{/if}
+			{#if !isStreaming}
+				{#each message.parts || [] as part}
+					<!-- {JSON.stringify(part)} -->
+
+					{#if part.text && part.text.length > 0}
+						{@html marked.parse(part.text)}
+					{:else}
+						<details>{JSON.stringify(part)}</details>
+					{/if}
+				{/each}
 			{/if}
 		</span>
 	{/if}
 	<div class="button-container">
-		<div
-			role="button"
-			class="delete-button"
-			onclick={() => deleteMessage()}
-			ontouchend={() => deleteMessage()}
-		></div>
-		<div
-			role="button"
-			class="edit-button"
-			onclick={() => console.log('Edit message')}
-			ontouchend={() => console.log('Edit message')}
-		></div>
+		<div role="button" class="delete-button" onclick={() => deleteMessage()}></div>
+		<div role="button" class="edit-button" onclick={() => console.log('Edit message')}></div>
 	</div>
 	{#if message.role === 'user'}
 		<span class="message-content">
-			{@html marked.parse(message.content)}
+			{#each message.parts || [] as part}
+				<!-- {JSON.stringify(part)} -->
 
-			{JSON.stringify(message.metadata?.parts)}
+				{#if part.text && part.text.length > 0}
+					{@html marked.parse(part.text)}
+				{:else}
+					<details>{JSON.stringify(part)}</details>
+				{/if}
+			{/each}
 		</span>
 	{/if}
 </div>
@@ -58,8 +54,8 @@
 		margin-left: 10px;
 		margin-right: 10px;
 
-		max-width: 80%;
-		width: 80%;
+		max-width: 90%;
+		width: 90%;
 
 		display: flex;
 		flex-direction: row;
@@ -87,7 +83,7 @@
 		max-width: 100%;
 
 		word-break: break-word;
-		text-wrap-mode: wrap;
+		/* text-wrap-mode: wrap; */
 
 		overflow-wrap: break-word;
 		overflow-x: scroll;
@@ -96,8 +92,14 @@
 		padding-right: 10px;
 		border-radius: 4px;
 
-		background-color: #f0f0f0;
-		border: 1px solid #ccc;
+		background-color: var(--bg-tertiary);
+		border: 1px solid var(--border-primary);
+		color: var(--text-primary);
+
+		transition:
+			background-color 0.3s ease,
+			border-color 0.3s ease,
+			color 0.3s ease;
 	}
 
 	.delete-button {
@@ -105,7 +107,7 @@
 		height: 20px;
 	}
 	.message:hover {
-		max-width: calc(80% + 23.5px);
+		max-width: calc(90% + 23.5px);
 	}
 
 	.button-container {
@@ -133,34 +135,113 @@
 
 		cursor: pointer;
 		margin: 3px;
-		border: 1px solid #ccc;
+		border: 1px solid var(--border-primary);
 		border-radius: 50%;
+		background-color: var(--bg-secondary);
+
+		transition:
+			background-color 0.3s ease,
+			border-color 0.3s ease;
+	}
+
+	.button-container > *:hover {
+		background-color: var(--bg-hover);
 	}
 
 	.delete-button {
-		content: url('https://api.iconify.design/line-md/trash.svg?color=black');
+		content: url('https://api.iconify.design/line-md/trash.svg?color=%23666');
+	}
+
+	:global([data-theme='dark']) .delete-button {
+		content: url('https://api.iconify.design/line-md/trash.svg?color=white');
 	}
 
 	.edit-button {
-		content: url('https://api.iconify.design/line-md/pencil-alt-twotone.svg?color=black');
+		content: url('https://api.iconify.design/line-md/pencil-alt-twotone.svg?color=%23666');
+	}
+
+	:global([data-theme='dark']) .edit-button {
+		content: url('https://api.iconify.design/line-md/pencil-alt-twotone.svg?color=white');
 	}
 
 	.thinking {
-		content: url('https://api.iconify.design/line-md/loading-alt-loop.svg?color=black');
+		content: url('https://api.iconify.design/line-md/loading-alt-loop.svg?color=%23666');
 		margin: auto;
 		width: 45px;
 		height: 45px;
 	}
 
+	:global([data-theme='dark']) .thinking {
+		content: url('https://api.iconify.design/line-md/loading-alt-loop.svg?color=white');
+	}
+
 	code {
-		color: white;
-		background-color: #2f2f2f;
-		border: 1px solid #ccc;
+		color: var(--text-primary);
+		background-color: var(--bg-secondary);
+		border: 1px solid var(--border-primary);
 		border-radius: 4px;
 		padding: 2px 4px;
 		font-family: monospace;
 
 		display: inline-block;
 		margin: 2px 0;
+
+		transition:
+			background-color 0.3s ease,
+			border-color 0.3s ease,
+			color 0.3s ease;
+	}
+
+	:global([data-theme='dark'] code) {
+		background-color: #1e1e1e;
+		color: #d4d4d4;
+	}
+
+	/* 마크다운 스타일링 */
+	:global(.message-content h1),
+	:global(.message-content h2),
+	:global(.message-content h3),
+	:global(.message-content h4),
+	:global(.message-content h5),
+	:global(.message-content h6) {
+		color: var(--text-primary);
+		margin-top: 1em;
+		margin-bottom: 0.5em;
+	}
+
+	:global(.message-content p) {
+		color: var(--text-primary);
+		margin: 0.5em 0;
+	}
+
+	:global(.message-content ul),
+	:global(.message-content ol) {
+		color: var(--text-primary);
+		margin-left: 1.5em;
+	}
+
+	:global(.message-content blockquote) {
+		border-left: 4px solid var(--border-primary);
+		padding-left: 1em;
+		margin: 1em 0;
+		color: var(--text-secondary);
+		background-color: var(--bg-primary);
+		border-radius: 0 4px 4px 0;
+	}
+
+	:global(.message-content pre) {
+		background-color: var(--bg-secondary);
+		border: 1px solid var(--border-primary);
+		border-radius: 4px;
+		padding: 1em;
+		overflow-x: auto;
+		margin: 1em 0;
+	}
+
+	:global(.message-content pre code) {
+		background: none;
+		border: none;
+		padding: 0;
+		margin: 0;
 	}
 </style>

@@ -10,7 +10,7 @@ export const GET: RequestHandler = async ({ url }) => {
 
 	// Message fetch Limit from query parameters
 	const conversation_id = searchParams.get('conversation_id');
-	const limit = searchParams.get('limit') || '100'; // Default limit to 100 if not provided
+	const limit = searchParams.get('limit') || '1000'; // Default limit to 100 if not provided
 
 	if (!conversation_id) {
 		return json({ error: 'Conversation ID is required' }, { status: 400 });
@@ -19,10 +19,10 @@ export const GET: RequestHandler = async ({ url }) => {
 	try {
 		let data;
 
-		const res = await pool.query('SELECT * FROM messages WHERE conversation_id = $1 LIMIT $2', [
-			conversation_id,
-			limit
-		]);
+		const res = await pool.query(
+			'SELECT * FROM messages WHERE conversation_id = $1 ORDER BY created_at DESC LIMIT $2',
+			[conversation_id, limit]
+		);
 		data = res.rows;
 
 		return json({ rows: data });
@@ -35,18 +35,18 @@ export const POST: RequestHandler = async ({ request }) => {
 	// Handle POST request
 	try {
 		const body = await request.json();
-		const { id, conversation_id, content, role, metadata } = body as Message;
+		const { id, conversation_id, parts, role } = body as Message;
 
-		if (!id || !conversation_id || content == undefined || !role) {
-			return json(
-				{ error: 'ID, Conversation ID, content, and role are required' },
-				{ status: 400 }
-			);
+		if (!id || !conversation_id || parts == undefined || !role) {
+			return json({ error: 'ID, Conversation ID, parts, and role are required' }, { status: 400 });
 		}
 
+		console.log('Received POST request: parts:', JSON.stringify(parts));
+		console.log('Received POST request: role:', JSON.stringify(role));
+
 		const res = await pool.query(
-			'INSERT INTO messages (id, conversation_id, content, role, metadata) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-			[id, conversation_id, content, role, metadata ? JSON.stringify(metadata) : null]
+			'INSERT INTO messages (id, conversation_id, parts, role) VALUES ($1, $2, $3, $4) RETURNING *',
+			[id, conversation_id, parts ? JSON.stringify(parts) : null, role]
 		);
 
 		const newMessage = res.rows[0];
