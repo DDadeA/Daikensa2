@@ -106,6 +106,10 @@
 		if (authToken) {
 			localStorage.setItem('authToken', authToken);
 			alert(`authToken saved: ${authToken}`);
+
+			// Remove params
+			urlParams.delete('authToken');
+			window.history.replaceState({}, '', `${window.location.pathname}?${urlParams}`);
 		}
 	};
 
