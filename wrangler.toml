@@ -1,0 +1,17 @@
+name = "my-sveltekit-app" # You can replace this with your app's name
+compatibility_date = "2024-03-20" # Use a recent date
+
+# This is the most important part
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# This section is optional, but useful for local development.
+# The variables you set in the Cloudflare UI will override these.
+DATABASE_URL = "will-be-replaced"
+
+[placement]
+mode = "smart"
+
+
+[site]
+bucket = ".svelte-kit/cloudflare"
