@@ -16,17 +16,11 @@ export const GET: RequestHandler = async ({ url }) => {
 	// Message fetch Limit from query parameters
 	const limit = searchParams.get('limit') || '1000'; // Default limit to 100 if not provided
 
-	// try {
-	// Your GET logic here
-
-	let data;
-
 	const res = await pool.query('SELECT * FROM conversations ORDER BY created_at DESC LIMIT $1', [
 		limit
 	]);
-	data = res.rows;
 
-	return json(data);
+	return json(res.rows);
 	// } catch (error) {
 	// 	return json({ error: error }, { status: 500 });
 	// }

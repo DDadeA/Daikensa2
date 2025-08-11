@@ -16,6 +16,8 @@
 	import { toolConfig, tools, actualTool } from '$lib/tools';
 	import { streamingText } from '$lib/stores';
 
+	import { apiFetch } from '$lib/api';
+
 	let loadingConversations: boolean = false;
 	let loadingMessages: boolean = false;
 	let isMessageStreaming = false; // Placeholder for streaming state
@@ -71,6 +73,7 @@
 		loadConversations();
 		focusToInput();
 		initializeFromLocalStorage();
+		initializeAuthToken();
 
 		// Enter key handling for input
 		const inputElement: HTMLTextAreaElement | null = document.querySelector(
@@ -93,6 +96,19 @@
 			});
 		}
 	});
+
+	const initializeAuthToken = () => {
+		// Get authToken from params
+		const urlParams = new URLSearchParams(window.location.search);
+		const authToken = urlParams.get('authToken');
+
+		// If exists, save it into localstorage
+		if (authToken) {
+			localStorage.setItem('authToken', authToken);
+			alert(`authToken saved: ${authToken}`);
+		}
+	};
+
 	const scrollToBottom = () => {
 		setTimeout(() => {
 			const streamingMessageElement: HTMLElement | null =
@@ -121,13 +137,13 @@
 		loadingConversations = true; // Set loading state
 
 		// Fetching conversations from the API
-		fetch('/api/conversation', {
+		apiFetch('/api/conversation', {
 			method: 'GET',
 			headers: {
 				'Content-Type': 'application/json'
 			}
 		})
-			.then((response) => response.json())
+			// .then((response) => response.json())
 			.then((data) => {
 				console.log('Conversations:', data);
 
@@ -162,25 +178,19 @@
 		loadingMessages = true; // Set loading state for messages
 
 		// Fetching messages for a specific conversation
-		fetch(`/api/message?conversation_id=${conversationID}`, {
+		apiFetch(`/api/message?conversation_id=${conversationID}`, {
 			method: 'GET',
 			headers: {
 				'Content-Type': 'application/json'
 			}
 		})
-			.then((response) => response.json())
+			// .then((response) => response.json())
 			.then((data) => {
 				messageList = data.rows.sort(
-					(a, b) =>
-						new Date(a.created_at.slice(0, 23)).getTime() -
-						new Date(b.created_at.slice(0, 23)).getTime()
-				); // Assuming the response is an array of messages
-				// Sort messages by timestamp if available
-				// if (messageList.length > 0) {
-				// 	messageList = messageList.sort(
-				// 		(a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
-				// 	);
-				// }
+					(a: Message, b: Message) =>
+						new Date(a.created_at?.slice(0, 23) || '').getTime() -
+						new Date(b.created_at?.slice(0, 23) || '').getTime()
+				);
 				console.log('Messages for conversation:', conversationID, messageList);
 			})
 			.catch((error) => {
@@ -234,14 +244,14 @@
 			scrollToBottom();
 
 			// POST the new message to the API
-			fetch(`/api/message`, {
+			apiFetch(`/api/message`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json'
 				},
 				body: JSON.stringify(newMessage)
 			})
-				.then((response) => response.json())
+				// .then((response) => response.json())
 				.then((data) => {
 					console.log('Message sent:', data);
 					// Optionally, you can handle the response here
@@ -371,7 +381,7 @@
 		}
 		messageList = [...messageList, { ...streamingMessage }];
 
-		const postOriginalPromise = fetch(`/api/message`, {
+		const postOriginalPromise = apiFetch(`/api/message`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json'
@@ -426,7 +436,7 @@
 		// 	// POST the result message to the API
 		// 	await postOriginalPromise; // Ensure the original message is posted first
 
-		// 	fetch(`/api/message`, {
+		// 	apiFetch(`/api/message`, {
 		// 		method: 'POST',
 		// 		headers: {
 		// 			'Content-Type': 'application/json'
@@ -541,7 +551,7 @@
 					deleteMessage={async () => {
 						messageList = messageList.filter((m) => m.id !== message.id); // Remove the message from the list
 
-						await fetch(`/api/message/`, {
+						await apiFetch(`/api/message/`, {
 							method: 'DELETE',
 							headers: {
 								'Content-Type': 'application/json'
