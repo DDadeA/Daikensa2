@@ -45,7 +45,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		console.log('Received POST request: role:', JSON.stringify(role));
 
 		const res = await pool.query(
-			'INSERT INTO messages (id, conversation_id, parts, role) VALUES ($1, $2, $3, $4) RETURNING *',
+			'INSERT INTO messages (id, conversation_id, parts, role) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO UPDATE SET conversation_id = EXCLUDED.conversation_id, parts = EXCLUDED.parts, role = EXCLUDED.role RETURNING *',
 			[id, conversation_id, parts ? JSON.stringify(parts) : null, role]
 		);
 

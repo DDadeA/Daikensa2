@@ -5,7 +5,11 @@
 
 	export let message: Message;
 	export let deleteMessage = () => {};
+	export let editMessage = async () => {};
 	export let isStreaming = false;
+
+	let isEditing = false;
+	let partsString = JSON.stringify(message.parts);
 	// export let streamingText: string = '';
 </script>
 
@@ -16,8 +20,9 @@
 				{@html marked.parse($streamingText || '')}
 			{:else if isStreaming}
 				<span class="thinking"></span>
-			{/if}
-			{#if !isStreaming}
+			{:else if isEditing}
+				<textarea bind:value={partsString}></textarea>
+			{:else}
 				{#each message.parts || [] as part}
 					<!-- {JSON.stringify(part)} -->
 
@@ -32,19 +37,47 @@
 	{/if}
 	<div class="button-container">
 		<div role="button" class="delete-button" onclick={() => deleteMessage()}></div>
-		<div role="button" class="edit-button" onclick={() => console.log('Edit message')}></div>
+		<div
+			role="button"
+			class="edit-button"
+			onclick={() => {
+				// Make text part editable
+				if (!isEditing) {
+					isEditing = true;
+				} else {
+					isEditing = false;
+
+					try {
+						// try JSON.parse this value
+						const newParts = JSON.parse(partsString);
+
+						// If okay, then apply it into message
+						message.parts = newParts;
+
+						// Then run the editMessage function
+						editMessage();
+					} catch (error) {
+						console.error('Failed to parse JSON:', error);
+					}
+				}
+			}}
+		></div>
 	</div>
 	{#if message.role === 'user'}
 		<span class="message-content">
-			{#each message.parts || [] as part}
-				<!-- {JSON.stringify(part)} -->
+			{#if isEditing}
+				<textarea bind:value={partsString}></textarea>
+			{:else}
+				{#each message.parts || [] as part}
+					<!-- {JSON.stringify(part)} -->
 
-				{#if part.text && part.text.length > 0}
-					{@html marked.parse(part.text)}
-				{:else}
-					<details>{JSON.stringify(part)}</details>
-				{/if}
-			{/each}
+					{#if part.text && part.text.length > 0}
+						{@html marked.parse(part.text)}
+					{:else}
+						<details>{JSON.stringify(part)}</details>
+					{/if}
+				{/each}
+			{/if}
 		</span>
 	{/if}
 </div>

@@ -33,6 +33,7 @@
 	let GEMINI_MODEL: string;
 	let GEMINI_TEMPERATURE: number;
 	let GEMINI_THINKING: boolean;
+	let GEMINI_INCLUDE_THINKING: boolean;
 	let GEMINI_THINKING_BUDGET: number;
 	let GEMINI_SYSTEM_PROMPT: string;
 
@@ -43,6 +44,7 @@
 		GEMINI_MODEL = localStorage.getItem('GEMINI_MODEL') || 'gemini-2.5-pro';
 		GEMINI_TEMPERATURE = parseFloat(localStorage.getItem('GEMINI_TEMPERATURE') || '0.95');
 		GEMINI_THINKING = localStorage.getItem('GEMINI_THINKING') === 'true';
+		GEMINI_INCLUDE_THINKING = localStorage.getItem('GEMINI_INCLUDE_THINKING') === 'true';
 		GEMINI_THINKING_BUDGET = parseInt(localStorage.getItem('GEMINI_THINKING_BUDGET') || '512', 10);
 		GEMINI_SYSTEM_PROMPT =
 			localStorage.getItem('GEMINI_SYSTEM_PROMPT') || 'You are a helpful assistant.';
@@ -224,13 +226,18 @@
 
 		if (AUTO_TIMESTAMP) {
 			// KST
-			const timestamp = new Date()
+			const now = new Date();
+			const utc = now.getTime() + now.getTimezoneOffset() * 60 * 1000;
+			const koreaTimeDiff = 9 * 60 * 60 * 1000;
+			const timestamp = new Date(utc + koreaTimeDiff)
 				.toLocaleString('ko-KR', {
 					timeZone: 'Asia/Seoul'
 				})
 				.replaceAll('. ', '.')
 				.replace('오전', 'AM')
-				.replace('오후', 'PM'); // Get current timestamp in KST
+				.replace('오후', 'PM');
+
+			// Get current timestamp in KST
 			inputMessage = `${timestamp}\n${inputMessage}`; // Prepend timestamp to the message
 		}
 
@@ -297,66 +304,82 @@
 		streamingMessage.parts = []; // Initialize parts for the streaming message
 		$streamingText = ''; // Reset streaming text
 
-		const response = await ai.models.generateContentStream({
-			model: GEMINI_MODEL,
-			config: {
-				temperature: GEMINI_TEMPERATURE,
-				safetySettings: [
-					HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
-					HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-					HarmCategory.HARM_CATEGORY_HARASSMENT,
-					HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-					HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT
-				].map((category) => ({
-					category,
-					threshold: HarmBlockThreshold.OFF
-				})),
-				systemInstruction: GEMINI_SYSTEM_PROMPT,
-				thinkingConfig: {
-					includeThoughts: false,
-					thinkingBudget: GEMINI_THINKING ? GEMINI_THINKING_BUDGET : 0
+		try {
+			const response = await ai.models.generateContentStream({
+				model: GEMINI_MODEL,
+				config: {
+					temperature: GEMINI_TEMPERATURE,
+					topP: 0.8,
+					maxOutputTokens: 8192,
+					safetySettings: [
+						HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
+						HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+						HarmCategory.HARM_CATEGORY_HARASSMENT,
+						HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+						HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT
+					].map((category) => ({
+						category,
+						threshold: HarmBlockThreshold.OFF
+					})),
+					systemInstruction: GEMINI_SYSTEM_PROMPT,
+					thinkingConfig: {
+						includeThoughts: GEMINI_INCLUDE_THINKING,
+						thinkingBudget: GEMINI_THINKING ? GEMINI_THINKING_BUDGET : 0
+					},
+					toolConfig: toolConfig,
+					tools: tools
 				},
-				toolConfig: toolConfig,
-				tools: tools
-			},
-			contents: context
-		});
-		for await (const chunk of response) {
-			if (!chunk) {
-				console.warn('Received empty chunk');
-				continue;
-			}
-
-			if (!(chunk.candidates && chunk.candidates.length > 0)) {
-				console.warn('No candidates found in the chunk');
-				continue; // Skip if no candidates are found
-			}
-
-			// If the chunk contains candidates, process the first candidate
-			const candidate = chunk.candidates[0];
-
-			if (!(candidate.content && candidate.content.parts && candidate.content.parts.length > 0)) {
-				console.warn('No content parts found in the candidate');
-				continue;
-			}
-
-			for (let part of candidate.content.parts) {
-				// Remove thoughtSignature
-				if (part.thoughtSignature) {
-					delete part.thoughtSignature; // Remove thoughtSignature from the part
+				contents: context
+			});
+			// console.log('LLM API response:', response);
+			for await (const chunk of response) {
+				console.log('Received chunk:', chunk);
+				if (!chunk) {
+					console.warn('Received empty chunk');
+					continue;
 				}
-				// If part.text is not empty, append it to the streaming message
-				streamingMessage.parts.push(part); // Append each part to the streaming message
 
-				if (part.text) {
-					$streamingText += part.text; // Append text to streamingText if it exists
-					// Force Svelte to trigger reactivity and update DOM
-					// await tick();
+				if (!(chunk.candidates && chunk.candidates.length > 0)) {
+					console.warn('No candidates found in the chunk');
+					continue; // Skip if no candidates are found
 				}
-			}
 
-			// scroll to streaming message
-			scrollToBottom();
+				// If the chunk contains candidates, process the first candidate
+				let candidate = chunk.candidates[0];
+
+				if (!candidate.content || !candidate.content.parts) {
+					console.warn('No content parts found in the candidate, trying next candidate');
+
+					console.log('candidate[0]', candidate);
+					console.log(' > candidates', chunk.candidates);
+					continue;
+				}
+
+				//@ts-ignore
+				for (let part of candidate.content.parts) {
+					// Remove thoughtSignature
+					if (part.thoughtSignature) {
+						delete part.thoughtSignature; // Remove thoughtSignature from the part
+					}
+					// If part.text is not empty, append it to the streaming message
+					streamingMessage.parts.push(part); // Append each part to the streaming message
+
+					if (part.text) {
+						$streamingText += part.text; // Append text to streamingText if it exists
+						// Force Svelte to trigger reactivity and update DOM
+						// await tick();
+					}
+				}
+
+				// scroll to streaming message
+				scrollToBottom();
+			}
+		} catch (error) {
+			console.error('Error during LLM API call:', error);
+			isMessageStreaming = false; // Reset streaming state on error
+
+			alert('SYSTEM ERROR: ' + error);
+			return; // Exit the function on error
 		}
 		// Streaming complete
 		isMessageStreaming = false;
@@ -393,156 +416,171 @@
 			body: JSON.stringify({ ...streamingMessage })
 		});
 
-		// If functionCall is present, handle it
+		for (const part of streamingMessage.parts) {
+			if (!part.functionCall?.name) {
+				continue;
+			}
 
-		// if (parts.parts.length > 0) {
-		// for (const part of parts?.parts) {
-		// 	if (!part.functionCall?.name) {
-		// 		continue;
-		// 	}
+			// Handle the function call here, e.g., execute the function or log it
+			// @ts-ignore
+			const functionName = part.functionCall.name as keyof typeof actualTool;
+			if (!actualTool[functionName]) {
+				console.error(`Function ${functionName} is not defined in actualTool`);
+				continue; // Skip if the function is not defined
+			}
 
-		// 	console.log('Function call detected:', part.functionCall);
-		// 	// Handle the function call here, e.g., execute the function or log it
+			// Call the actual tool function
+			//@ts-ignore
+			const toolResult = await actualTool[functionName](part.functionCall.args);
+			console.log('Function call result:', toolResult);
 
-		// 	const functionName = part.functionCall.name as keyof typeof actualTool;
-		// 	if (!actualTool[functionName]) {
-		// 		console.error(`Function ${functionName} is not defined in actualTool`);
-		// 		continue; // Skip if the function is not defined
-		// 	}
+			//  handle the result here, send it back to the LLM
 
-		// 	//@ts-ignore
-		// 	const toolResult = await actualTool[functionName](part.functionCall.args);
-		// 	console.log('Function call result:', toolResult);
-		// 	// You can handle the result here, e.g., send it back to the LLM or log it
+			// Append the result to the streaming message content
+			const resultMessage: Message = {
+				id: randomUUID(),
+				conversation_id: currentConversationID,
+				role: 'user',
+				parts: [
+					{
+						functionResponse: {
+							name: functionName,
+							response: {
+								output: toolResult
+							}
+						}
+					}
+				]
+			};
 
-		// 	// Append the result to the streaming message content
-		// 	const resultMessage: Message = {
-		// 		id: randomUUID(),
-		// 		conversation_id: currentConversationID,
-		// 		role: 'user',
-		// 		content: '',
-		// 		metadata: {
-		// 			parts: [
-		// 				{
-		// 					functionResponse: {
-		// 						name: functionName,
-		// 						response: {
-		// 							output: toolResult
-		// 						}
-		// 					}
-		// 				}
-		// 			]
-		// 		}
-		// 	};
+			messageList = [...messageList, { ...resultMessage }];
 
-		// 	messageList = [...messageList, { ...resultMessage }];
+			// POST the result message to the API
+			await postOriginalPromise; // Ensure the original message is posted first
 
-		// 	// POST the result message to the API
-		// 	await postOriginalPromise; // Ensure the original message is posted first
+			apiFetch(`/api/message`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify(resultMessage)
+			});
 
-		// 	apiFetch(`/api/message`, {
-		// 		method: 'POST',
-		// 		headers: {
-		// 			'Content-Type': 'application/json'
-		// 		},
-		// 		body: JSON.stringify(resultMessage)
-		// 	});
-
-		// 	handleAPI(); // Call the API handler to process the result message
-		// }
+			handleAPI(); // Call the API handler to process the result message
+		}
 	};
 </script>
 
 <title>ONLY DAIKENSA V2</title>
 <div id="app">
 	<!-- Main application container -->
-	<details id="header">
+	<details>
 		<summary>{conversationList.find((convo) => convo.id === currentConversationID)?.title}</summary>
-		<p>{loadingConversations ? 'Loading conversations...' : 'Chat:'}</p>
-		<select
-			bind:value={currentConversationID}
-			onchange={() => updateMessageList(currentConversationID)}
-		>
-			{#each conversationList as conversation}
-				<option value={conversation.id}>{conversation.title}</option>
-			{/each}
-		</select>
-		<span class="vertical-line"></span>
+		<div id="header">
+			<p>{loadingConversations ? 'Loading conversations...' : 'Chat:'}</p>
+			<select
+				bind:value={currentConversationID}
+				onchange={() => updateMessageList(currentConversationID)}
+			>
+				{#each conversationList as conversation}
+					<option value={conversation.id}>{conversation.title}</option>
+				{/each}
+			</select>
+			<span class="vertical-line"></span>
 
-		<button onclick={() => loadConversations()}>Reload Conversations</button>
-		<button onclick={() => updateMessageList(currentConversationID)}>Reload Messages</button>
+			<button onclick={() => loadConversations()}>Reload Conversations</button>
+			<button onclick={() => updateMessageList(currentConversationID)}>Reload Messages</button>
 
-		<span class="vertical-line"></span>
-		<details>
-			<summary>Options</summary>
-			<div style="display: flex; flex-direction: row; align-items: center;">
-				<button onclick={() => toggleTheme()}>
-					{currentTheme === 'light' ? '🌙' : '☀️'}
-				</button>
+			<span class="vertical-line"></span>
+			<details>
+				<summary>Options</summary>
+				<div style="display: flex; flex-direction: row; align-items: center;">
+					<button onclick={() => toggleTheme()}>
+						{currentTheme === 'light' ? '🌙' : '☀️'}
+					</button>
 
-				<span class="vertical-line"></span>
-				<label for="auto-timestamp">Auto Timestamp</label>
-				<input id="auto-timestamp" type="checkbox" bind:checked={AUTO_TIMESTAMP} />
-			</div>
-		</details>
+					<span class="vertical-line"></span>
+					<label for="auto-timestamp">Auto Timestamp</label>
+					<input id="auto-timestamp" type="checkbox" bind:checked={AUTO_TIMESTAMP} />
+				</div>
+			</details>
 
-		<span class="vertical-line"></span>
-		<details>
-			<summary>LLM</summary>
-			<div id="llm-settings">
-				<select
-					bind:value={GEMINI_MODEL}
-					onchange={() => localStorage.setItem('GEMINI_MODEL', GEMINI_MODEL)}
-				>
-					{#each ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'] as model}
-						<option value={model}>{model}</option>
-					{/each}
-				</select>
-				<span class="vertical-line"></span>
-				<label for="thinking-checkbox">Thinking</label>
-				<input
-					type="checkbox"
-					id="thinking-checkbox"
-					bind:checked={GEMINI_THINKING}
-					oninput={() => localStorage.setItem('GEMINI_THINKING', GEMINI_THINKING?.toString())}
-				/>
-				<input
-					type="number"
-					placeholder="Thinking Budget"
-					bind:value={GEMINI_THINKING_BUDGET}
-					oninput={() =>
-						localStorage.setItem('GEMINI_THINKING_BUDGET', GEMINI_THINKING_BUDGET.toString())}
-					min="128"
-					max="32768"
-					step="1"
-				/>
+			<span class="vertical-line"></span>
+			<details>
+				<summary>LLM</summary>
+				<div id="llm-settings">
+					<select
+						bind:value={GEMINI_MODEL}
+						onchange={() => localStorage.setItem('GEMINI_MODEL', GEMINI_MODEL)}
+					>
+						{#each ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'] as model}
+							<option value={model}>{model}</option>
+						{/each}
+					</select>
+					<span class="vertical-line"></span>
+					<label for="thinking-checkbox">Thinking</label>
+					<input
+						type="checkbox"
+						id="thinking-checkbox"
+						bind:checked={GEMINI_THINKING}
+						onclick={(event) =>
+							localStorage.setItem(
+								'GEMINI_THINKING',
+								(event.target as HTMLInputElement).checked.toString()
+							)}
+					/>
+					<span class="vertical-line"></span>
+					<label for="include-thinking-checkbox">Include Thinking</label>
+					<input
+						type="checkbox"
+						id="include-thinking-checkbox"
+						bind:checked={GEMINI_INCLUDE_THINKING}
+						onclick={(event) =>
+							localStorage.setItem(
+								'GEMINI_INCLUDE_THINKING',
+								(event.target as HTMLInputElement).checked.toString()
+							)}
+					/>
+					<span class="vertical-line"></span>
+					<input
+						type="number"
+						placeholder="Thinking Budget"
+						bind:value={GEMINI_THINKING_BUDGET}
+						oninput={() =>
+							localStorage.setItem('GEMINI_THINKING_BUDGET', GEMINI_THINKING_BUDGET.toString())}
+						min="128"
+						max="32768"
+						step="1"
+					/>
 
-				<span class="vertical-line"></span>
-				<span>Temp: {GEMINI_TEMPERATURE}</span>
-				<input
-					type="range"
-					placeholder="Temperature"
-					bind:value={GEMINI_TEMPERATURE}
-					oninput={() => localStorage.setItem('GEMINI_TEMPERATURE', GEMINI_TEMPERATURE.toString())}
-					min="0"
-					max="1"
-					step="0.01"
-				/>
-				<br />
-				<input
-					type="password"
-					placeholder="API_KEY"
-					bind:value={GEMINI_API_KEY}
-					oninput={() => localStorage.setItem('GEMINI_API_KEY', GEMINI_API_KEY)}
-				/>
-				<textarea
-					placeholder="system prompt"
-					bind:value={GEMINI_SYSTEM_PROMPT}
-					oninput={() => localStorage.setItem('GEMINI_SYSTEM_PROMPT', GEMINI_SYSTEM_PROMPT)}
-				></textarea>
-				<br />
-			</div>
-		</details>
+					<span class="vertical-line"></span>
+					<span>Temp: {GEMINI_TEMPERATURE}</span>
+					<input
+						type="range"
+						placeholder="Temperature"
+						bind:value={GEMINI_TEMPERATURE}
+						oninput={() =>
+							localStorage.setItem('GEMINI_TEMPERATURE', GEMINI_TEMPERATURE.toString())}
+						min="0"
+						max="1"
+						step="0.01"
+					/>
+					<br />
+					<input
+						type="password"
+						placeholder="API_KEY"
+						bind:value={GEMINI_API_KEY}
+						oninput={() => localStorage.setItem('GEMINI_API_KEY', GEMINI_API_KEY)}
+					/>
+					<textarea
+						placeholder="system prompt"
+						bind:value={GEMINI_SYSTEM_PROMPT}
+						oninput={() => localStorage.setItem('GEMINI_SYSTEM_PROMPT', GEMINI_SYSTEM_PROMPT)}
+					></textarea>
+					<br />
+				</div>
+			</details>
+		</div>
 	</details>
 
 	<div id="message-container">
@@ -566,12 +604,27 @@
 							})
 						});
 					}}
+					editMessage={async () => {
+						await apiFetch(`/api/message/`, {
+							method: 'POST',
+							headers: {
+								'Content-Type': 'application/json'
+							},
+							body: JSON.stringify({
+								id: message.id,
+								conversation_id: message.conversation_id,
+								role: message.role,
+								parts: message.parts,
+								created_at: message.created_at
+							})
+						});
+					}}
 				/>
 			{/each}
 		{/if}
 		{#if isMessageStreaming}
 			<div class="model message">
-				<MessageElement message={streamingMessage} isStreaming={true} />
+				<MessageElement message={streamingMessage} isStreaming={isMessageStreaming} />
 			</div>
 		{/if}
 	</div>
