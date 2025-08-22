@@ -1,19 +1,21 @@
 import { FunctionCallingConfigMode, Type, Behavior } from '@google/genai';
 import type { CallableTool, FunctionCall, FunctionDeclaration, Tool } from '@google/genai';
+import { writable } from 'svelte/store';
+import { apiFetch } from '$lib/api';
 
 export const tools: Tool[] = [
 	{
 		functionDeclarations: [
 			{
 				// behavior: Behavior.BLOCKING,
-				name: 'eval',
-				description: 'Evaluate a JavaScript expression and return the console.log() output.',
+				name: 'javascript',
+				description: 'Run a JavaScript expression and return the console.log() output.',
 				parameters: {
 					type: Type.OBJECT,
 					properties: {
 						expression: {
 							type: Type.STRING,
-							description: 'The JavaScript expression to evaluate.'
+							description: 'The JavaScript expression to run.'
 						}
 					},
 					required: ['expression']
@@ -33,6 +35,39 @@ export const tools: Tool[] = [
 					},
 					required: ['message']
 				}
+			},
+			{
+				name: 'choice',
+				description:
+					"Give the user choices to select from. It's better to use this tool when you need user input but user cannot type freely.",
+				parameters: {
+					type: Type.OBJECT,
+					properties: {
+						choices: {
+							type: Type.ARRAY,
+							items: {
+								type: Type.STRING,
+								description: 'A choice for the user to select.'
+							},
+							description: 'An array of choices for the user to select from.'
+						}
+					},
+					required: ['choices']
+				}
+			},
+			{
+				name: 'query',
+				description: 'Run a SQL query and return the result.',
+				parameters: {
+					type: Type.OBJECT,
+					properties: {
+						query: {
+							type: Type.STRING,
+							description: 'The SQL query to run.'
+						}
+					},
+					required: ['query']
+				}
 			}
 		] as FunctionDeclaration[]
 	}
@@ -45,7 +80,7 @@ export const actualTool = {
 			confirmation: 'Alert displayed successfully. (Surely Do not spam this. User hate it)'
 		};
 	},
-	eval: async (params: { expression: string }) => {
+	javascript: async (params: { expression: string }) => {
 		return {
 			result: (() => {
 				// From now, all logs will be captured
@@ -56,17 +91,63 @@ export const actualTool = {
 					capturedLogs.push(args.join(' '));
 				};
 
-				eval(params.expression);
+				try {
+					// eval(params.expression.replaceAll('\\n', '\n'));
+					let targetFunction = new Function(params.expression);
+					targetFunction();
+				} catch (error) {
+					capturedLogs.push(`Error: ${error instanceof Error ? error.message : String(error)}`);
+				}
 
 				// Restore original console.log
 				console.log = originalConsoleLog;
 
 				// Return the logs
-				return capturedLogs;
+				return {
+					confirmation: capturedLogs
+				};
 			})()
+		};
+	},
+	choice: async (params: { choices: string[] }) => {
+		isAskingChoice.set(true);
+
+		await new Promise<void>((resolve) => {
+			handleChoice = (choice: string) => {
+				choosenOption = choice;
+				isAskingChoice.set(false);
+				resolve();
+			};
+			cancelToolAwait = () => {
+				isAskingChoice.set(false);
+				choosenOption = null;
+				resolve();
+			};
+			choiceOptions.set(params.choices);
+		});
+
+		if (choosenOption === null) {
+			return null;
+		}
+
+		return {
+			confirmation: `User selected: ${choosenOption}`
+		};
+	},
+	query: async (params: { query: string }) => {
+		let res = await apiFetch(`/api/query?query=${encodeURIComponent(params.query)}`);
+		return {
+			confirmation: JSON.stringify(res, null, 2)
 		};
 	}
 };
+
+// export let isAskingChoice = false;
+export let isAskingChoice = writable<boolean>(false);
+export let choiceOptions = writable<string[]>([]);
+let choosenOption: string | null = null;
+export let handleChoice = (choice: string) => {};
+export let cancelToolAwait = () => {};
 
 export const toolConfig = {
 	// functionCallingConfig: {

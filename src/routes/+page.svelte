@@ -2,7 +2,6 @@
 	import { onMount, tick } from 'svelte';
 	import type { Conversation, Message } from '$lib/types';
 	import MessageElement from '$lib/components/MessageElement.svelte';
-
 	import { GoogleGenAI } from '@google/genai';
 	import {
 		HarmBlockMethod,
@@ -10,13 +9,11 @@
 		HarmBlockThreshold,
 		FunctionCallingConfigMode
 	} from '@google/genai';
-
 	import type { Part, Content } from '@google/genai';
-
-	import { toolConfig, tools, actualTool } from '$lib/tools';
+	import { tools, actualTool, cancelToolAwait } from '$lib/tools';
 	import { streamingText } from '$lib/stores';
-
 	import { apiFetch } from '$lib/api';
+	import { isAskingChoice, choiceOptions, handleChoice } from '$lib/tools';
 
 	let loadingConversations: boolean = false;
 	let loadingMessages: boolean = false;
@@ -36,6 +33,7 @@
 	let GEMINI_INCLUDE_THINKING: boolean;
 	let GEMINI_THINKING_BUDGET: number;
 	let GEMINI_SYSTEM_PROMPT: string;
+	let GEMINI_DO_STREAMING: boolean; // Toggle for streaming mode
 
 	let currentTheme: 'light' | 'dark' = 'light';
 
@@ -49,6 +47,7 @@
 		GEMINI_SYSTEM_PROMPT =
 			localStorage.getItem('GEMINI_SYSTEM_PROMPT') || 'You are a helpful assistant.';
 		currentTheme = (localStorage.getItem('theme') as 'light' | 'dark') || 'light';
+		GEMINI_DO_STREAMING = localStorage.getItem('GEMINI_DO_STREAMING') === 'true';
 		applyTheme(currentTheme);
 	};
 
@@ -76,6 +75,11 @@
 		focusToInput();
 		initializeFromLocalStorage();
 		initializeAuthToken();
+
+		window.onerror = (message, source, lineno, colno, error) => {
+			console.error('Global error handler:', message, source, lineno, colno, error);
+			alert(`Error: ${message}\nSource: ${source}\nLine: ${lineno}, Column: ${colno}`);
+		};
 
 		// Enter key handling for input
 		const inputElement: HTMLTextAreaElement | null = document.querySelector(
@@ -222,9 +226,10 @@
 			return; // Prevent sending a new message while streaming
 		}
 
+		cancelToolAwait();
 		inputMessage = inputMessage.trim();
 
-		if (AUTO_TIMESTAMP) {
+		if (AUTO_TIMESTAMP && inputMessage) {
 			// KST
 			const now = new Date();
 			const utc = now.getTime() + now.getTimezoneOffset() * 60 * 1000;
@@ -275,15 +280,120 @@
 			focusToInput(); // Refocus the input field
 		}
 
-		handleAPI(); // Call the function to handle API interaction
+		try {
+			handleAPI(); // Call the function to handle API interaction
+		} catch (error) {
+			console.error('Error handling API interaction:', error);
+			isMessageStreaming = false; // Reset streaming state on error
+		}
+	};
+
+	const receive = async (context: any, streamingMessage: any, depth: number = 0) => {
+		let response = await fetch(
+			`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+			{
+				credentials: 'omit',
+				headers: {
+					// 'Accept-Language': 'ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3',
+					'Content-Type': 'application/json',
+					Connection: 'keep-alive',
+					'Keep-Alive': 'timeout=5, max=200'
+				},
+				referrer: document.location.href,
+				body: JSON.stringify({
+					contents: context,
+					tools: tools,
+					generation_config: {
+						maxOutputTokens: 8192,
+						temperature: GEMINI_TEMPERATURE,
+						topP: 0.9,
+						topK: 128,
+						thinkingConfig: {
+							thinkingBudget: GEMINI_THINKING ? GEMINI_THINKING_BUDGET : 0,
+							includeThoughts: GEMINI_INCLUDE_THINKING
+						},
+						mediaResolution: 'MEDIA_RESOLUTION_MEDIUM'
+					},
+					safetySettings: [
+						{
+							category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+							threshold: HarmBlockThreshold.BLOCK_NONE
+						},
+						{
+							category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+							threshold: HarmBlockThreshold.BLOCK_NONE
+						},
+						{
+							category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+							threshold: HarmBlockThreshold.BLOCK_NONE
+						},
+						{
+							category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+							threshold: HarmBlockThreshold.BLOCK_NONE
+						},
+						{
+							category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
+							threshold: HarmBlockThreshold.BLOCK_NONE
+						}
+					]
+				}),
+				method: 'POST',
+				mode: 'cors'
+			}
+		);
+
+		let data = await response.json();
+
+		if (!(data.candidates && data.candidates.length > 0)) {
+			console.warn('No candidates found in the chunk');
+			throw new Error('No candidates found in the response chunk');
+		}
+
+		// If the chunk contains candidates, process the first candidate
+		let candidate = data.candidates[0];
+
+		if (!candidate.content || !candidate.content.parts) {
+			console.warn('No content parts found in the candidate, trying next candidate');
+
+			console.log('candidate[0]', candidate);
+			console.log(' > candidates', data.candidates);
+			// throw new Error('No content parts found in the candidate');
+			// return streamingMessage; // Return the empty streaming message
+
+			// Retry
+			if (depth < 3) {
+				console.warn(`Retrying receive() due to missing content parts (attempt ${depth + 1})`);
+				streamingText.set(`Receive attempt ${depth + 1}`); // Reset streaming text
+				return await receive(context, streamingMessage, depth + 1);
+			} else {
+				console.error('Max retry attempts reached. Returning empty streaming message.');
+				return streamingMessage; // Return the empty streaming message after retries
+			}
+		}
+
+		//@ts-ignore
+		for (let part of candidate.content.parts) {
+			// Remove thoughtSignature
+			if (part.thoughtSignature) {
+				delete part.thoughtSignature; // Remove thoughtSignature from the part
+			}
+			// If part.text is not empty, append it to the streaming message
+			streamingMessage.parts.push(part); // Append each part to the streaming message
+
+			if (part.text) {
+				$streamingText += part.text.replaceAll('\\n', '\n'); // Append text to streamingText if it exists
+				// Force Svelte to trigger reactivity and update DOM
+				// await tick();
+			}
+		}
+
+		// scroll to streaming message
+		scrollToBottom();
+		return streamingMessage; // Return the final streaming message
 	};
 
 	const handleAPI = async () => {
-		// Send the message to the LLM API
-		const ai = new GoogleGenAI({
-			apiKey: GEMINI_API_KEY
-		});
-
+		scrollToBottom();
 		// -- // Create entire context for the LLM API from the messageList
 		let context: Content[] = [];
 
@@ -304,83 +414,10 @@
 		streamingMessage.parts = []; // Initialize parts for the streaming message
 		$streamingText = ''; // Reset streaming text
 
-		try {
-			const response = await ai.models.generateContentStream({
-				model: GEMINI_MODEL,
-				config: {
-					temperature: GEMINI_TEMPERATURE,
-					topP: 0.8,
-					maxOutputTokens: 8192,
-					safetySettings: [
-						HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
-						HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-						HarmCategory.HARM_CATEGORY_HARASSMENT,
-						HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-						HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT
-					].map((category) => ({
-						category,
-						threshold: HarmBlockThreshold.OFF
-					})),
-					systemInstruction: GEMINI_SYSTEM_PROMPT,
-					thinkingConfig: {
-						includeThoughts: GEMINI_INCLUDE_THINKING,
-						thinkingBudget: GEMINI_THINKING ? GEMINI_THINKING_BUDGET : 0
-					},
-					toolConfig: toolConfig,
-					tools: tools
-				},
-				contents: context
-			});
-			// console.log('LLM API response:', response);
-			for await (const chunk of response) {
-				console.log('Received chunk:', chunk);
-				if (!chunk) {
-					console.warn('Received empty chunk');
-					continue;
-				}
+		GEMINI_DO_STREAMING
+			? await receiveStream(context, streamingMessage)
+			: await receive(context, streamingMessage);
 
-				if (!(chunk.candidates && chunk.candidates.length > 0)) {
-					console.warn('No candidates found in the chunk');
-					continue; // Skip if no candidates are found
-				}
-
-				// If the chunk contains candidates, process the first candidate
-				let candidate = chunk.candidates[0];
-
-				if (!candidate.content || !candidate.content.parts) {
-					console.warn('No content parts found in the candidate, trying next candidate');
-
-					console.log('candidate[0]', candidate);
-					console.log(' > candidates', chunk.candidates);
-					continue;
-				}
-
-				//@ts-ignore
-				for (let part of candidate.content.parts) {
-					// Remove thoughtSignature
-					if (part.thoughtSignature) {
-						delete part.thoughtSignature; // Remove thoughtSignature from the part
-					}
-					// If part.text is not empty, append it to the streaming message
-					streamingMessage.parts.push(part); // Append each part to the streaming message
-
-					if (part.text) {
-						$streamingText += part.text; // Append text to streamingText if it exists
-						// Force Svelte to trigger reactivity and update DOM
-						// await tick();
-					}
-				}
-
-				// scroll to streaming message
-				scrollToBottom();
-			}
-		} catch (error) {
-			console.error('Error during LLM API call:', error);
-			isMessageStreaming = false; // Reset streaming state on error
-
-			alert('SYSTEM ERROR: ' + error);
-			return; // Exit the function on error
-		}
 		// Streaming complete
 		isMessageStreaming = false;
 
@@ -391,7 +428,7 @@
 		const textParts = streamingMessage.parts.filter((part) => part.text);
 
 		if (textParts.length > 0) {
-			const MergedText = textParts.map((part) => part.text).join('');
+			const MergedText = textParts.map((part) => part.text?.replaceAll('\\n', '\n')).join('');
 
 			// Find the first text part and update its text
 			const firstTextPart = streamingMessage.parts.find((part) => part.text);
@@ -434,6 +471,11 @@
 			const toolResult = await actualTool[functionName](part.functionCall.args);
 			console.log('Function call result:', toolResult);
 
+			if (toolResult == null) {
+				console.warn(`Function ${functionName} intentionally returned null. Skipping response.`);
+				continue; // Skip sending a response if the function returned null
+			}
+
 			//  handle the result here, send it back to the LLM
 
 			// Append the result to the streaming message content
@@ -468,6 +510,149 @@
 
 			handleAPI(); // Call the API handler to process the result message
 		}
+	};
+
+	const receiveStream = async (context: any, streamingMessage: any) => {
+		try {
+			let response = await fetch(
+				`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:streamGenerateContent?key=${GEMINI_API_KEY}&alt=sse`,
+				{
+					credentials: 'omit',
+					headers: {
+						// Accept: '*/*',
+						'Accept-Language': 'ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3',
+						'Content-Type': 'application/json'
+					},
+					referrer: document.location.href,
+					body: JSON.stringify({
+						contents: context,
+						tools: tools,
+						generation_config: {
+							maxOutputTokens: 8192,
+							temperature: GEMINI_TEMPERATURE,
+							topP: 0.9,
+							topK: 128,
+							thinkingConfig: {
+								thinkingBudget: GEMINI_THINKING ? GEMINI_THINKING_BUDGET : 0,
+								includeThoughts: GEMINI_INCLUDE_THINKING
+							},
+							mediaResolution: 'MEDIA_RESOLUTION_MEDIUM'
+						},
+						safetySettings: [
+							{
+								category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+								threshold: HarmBlockThreshold.BLOCK_NONE
+							},
+							{
+								category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+								threshold: HarmBlockThreshold.BLOCK_NONE
+							},
+							{
+								category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+								threshold: HarmBlockThreshold.BLOCK_NONE
+							},
+							{
+								category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+								threshold: HarmBlockThreshold.BLOCK_NONE
+							},
+							{
+								category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
+								threshold: HarmBlockThreshold.BLOCK_NONE
+							}
+						]
+					}),
+					method: 'POST',
+					mode: 'cors'
+				}
+			);
+
+			// for await (const chunk of response) {
+			const reader = response.body?.getReader();
+			if (!reader) {
+				throw new Error('Response body is not readable');
+			}
+			while (true) {
+				const raw_data = (await reader.read()) as any;
+				// console.log('Received chunk:', chunk);
+
+				if (!raw_data) {
+					console.warn('Received empty chunk');
+					continue;
+				}
+				if (raw_data.done) {
+					console.log('Stream finished');
+					break; // Exit the loop if the stream is done
+				}
+
+				let raw_text = new TextDecoder()
+					.decode(raw_data.value)
+					.replace(/data: /g, '')
+					.trim();
+				// SSE format! wow.
+
+				// console.log('Received raw text:', raw_text);
+
+				// split\n\n, // and parse each chunk
+				let chunks = raw_text.split(/\r?\n\r?\n/g).map((line) => {
+					console.log('Received line:', line, '[END]');
+					if (!line) {
+						console.warn('Received empty line, skipping');
+						return null; // Skip empty lines
+					}
+
+					// Parse the JSON line
+					return JSON.parse(line.replaceAll('\n', '\\n'));
+				});
+
+				if (chunks.length > 1) {
+					console.warn('Received multiple chunks in a single read:', chunks);
+				}
+				for (const chunk of chunks) {
+					if (!(chunk.candidates && chunk.candidates.length > 0)) {
+						console.warn('No candidates found in the chunk');
+						continue; // Skip if no candidates are found
+					}
+
+					// If the chunk contains candidates, process the first candidate
+					let candidate = chunk.candidates[0];
+
+					if (!candidate.content || !candidate.content.parts) {
+						console.warn('No content parts found in the candidate, trying next candidate');
+
+						console.log('candidate[0]', candidate);
+						console.log(' > candidates', chunk.candidates);
+						continue;
+					}
+
+					//@ts-ignore
+					for (let part of candidate.content.parts) {
+						// Remove thoughtSignature
+						if (part.thoughtSignature) {
+							delete part.thoughtSignature; // Remove thoughtSignature from the part
+						}
+						// If part.text is not empty, append it to the streaming message
+						streamingMessage.parts.push(part); // Append each part to the streaming message
+
+						if (part.text) {
+							$streamingText += part.text.replaceAll('\\n', '\n'); // Append text to streamingText if it exists
+							// Force Svelte to trigger reactivity and update DOM
+							// await tick();
+						}
+					}
+
+					// scroll to streaming message
+					scrollToBottom();
+				}
+			}
+		} catch (error) {
+			console.error('Error during LLM API call:', error);
+			isMessageStreaming = false; // Reset streaming state on error
+
+			// alert('SYSTEM ERROR: ' + error);
+			return; // Exit the function on error
+		}
+
+		return streamingMessage; // Return the final streaming message
 	};
 </script>
 
@@ -551,6 +736,18 @@
 						min="128"
 						max="32768"
 						step="1"
+					/>
+					<span class="vertical-line"></span>
+					<label for="do-streaming-checkbox">do streaming</label>
+					<input
+						type="checkbox"
+						id="do-streaming-checkbox"
+						bind:checked={GEMINI_DO_STREAMING}
+						onclick={(event) =>
+							localStorage.setItem(
+								'GEMINI_DO_STREAMING',
+								(event.target as HTMLInputElement).checked.toString()
+							)}
 					/>
 
 					<span class="vertical-line"></span>
@@ -641,6 +838,16 @@
 			>
 		</button>
 	</div>
+	{#if $isAskingChoice}
+		<div class="choice-prompt">
+			<!-- <p>Please select an option:</p> -->
+			<ul>
+				{#each $choiceOptions as option}
+					<li onclick={() => handleChoice(option)}>{option}</li>
+				{/each}
+			</ul>
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -909,4 +1116,53 @@
 	}
 
 	/* ------- */
+	.choice-prompt {
+		position: fixed;
+		bottom: 150px;
+		left: 50%;
+		transform: translateX(-50%);
+		background-color: var(--bg-secondary);
+		color: var(--text-primary);
+		padding: 10px;
+		border-radius: 8px;
+		box-shadow: 0 2px 10px var(--shadow-medium);
+		z-index: 1000;
+
+		width: 80%;
+		max-width: 600px;
+
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+
+		opacity: 0.95;
+	}
+	.choice-prompt p {
+		margin: 0;
+		font-size: 16px;
+	}
+	.choice-prompt ul {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.choice-prompt li {
+		padding: 20px;
+		padding-left: 10px;
+		padding-right: 10px;
+
+		background-color: var(--bg-tertiary);
+		border-radius: 4px;
+		cursor: pointer;
+		transition: background-color 0.3s ease;
+	}
+	.choice-prompt li:hover {
+		background-color: var(--bg-hover);
+	}
+	.choice-prompt li:active {
+		background-color: var(--bg-active);
+	}
 </style>

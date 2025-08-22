@@ -16,10 +16,9 @@
 <div id={message.id} class="{message.role} message">
 	{#if message.role === 'model'}
 		<span class="message-content">
-			{#if isStreaming && $streamingText.length > 0}
-				{@html marked.parse($streamingText || '')}
-			{:else if isStreaming}
+			{#if isStreaming}
 				<span class="thinking"></span>
+				{@html marked.parse($streamingText || '')}
 			{:else if isEditing}
 				<textarea bind:value={partsString}></textarea>
 			{:else}

@@ -27,10 +27,10 @@ export const apiFetch = async (url: string, options: RequestInit = {}) => {
 		headers: baseHeaders
 	});
 
-	if (!response.ok) {
-		const errorData = await response.json();
-		throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
-	}
+	// if (!response.ok) {
+	// 	const errorData = await response.json();
+	// 	throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+	// }
 
 	return response.json();
 };
