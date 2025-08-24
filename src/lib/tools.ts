@@ -1,7 +1,54 @@
 import { FunctionCallingConfigMode, Type, Behavior } from '@google/genai';
 import type { CallableTool, FunctionCall, FunctionDeclaration, Tool } from '@google/genai';
+import JSZip from 'jszip';
+
 import { writable } from 'svelte/store';
 import { apiFetch } from '$lib/api';
+import { get } from 'svelte/store';
+import { nai_api_key } from '$lib/stores';
+
+const PROMPT_TEMPLATE = `
+If 대현자 wants to show, draw, or generate an anime-style image, follow the prompt formatting guideline below.
+대현자 are assisting a text-to-image diffusion model (like Stable Diffusion or NovelAI) that interprets **flat, tag-style prompts**, not full natural language. Your task is to convert user requests into concise, visually descriptive prompts using comma-separated keywords.
+
+---
+### 📌 Prompt Construction Guide
+
+1. **Do NOT write full sentences.**  
+   Use short, descriptive phrases or single keywords.
+
+2. **Use comma-separated tags.**  
+   These represent visual elements that should co-occur in the image.
+
+3. **Include the following categories when possible** (in any order):
+   - \`Character Count & Type\`: e.g., \`1girl\`, \`2boys\`
+   - \`Pose or Action\`: e.g., \`sitting on bench\`, \`holding gift\`
+   - \`Facial Expression\`: e.g., \`smiling\`, \`blushing\`, \`crying\`
+   - \`Hair\`: style, length, color (e.g., \`long black hair\`, \`ponytail\`)
+   - \`Eyes\`: shape and color (e.g., \`golden eyes\`, \`narrow eyes\`)
+   - \`Outfit\`: clothing type, color, accessories (e.g., \`school uniform\`, \`maid outfit\`)
+   - \`Perspective\`: e.g., \`close-up\`, \`overhead view\`, \`profile view\`
+   - \`Scene/Background\`: e.g., \`classroom\`, \`japanese bedroom\`, \`forest at night\`
+   - \`Lighting/Mood\`: e.g., \`soft lighting\`, \`sunset glow\`, \`dramatic shadows\`
+
+4. **Avoid abstract logic**, such as \`(source#give item)\` or narrative explanations. Instead, express visually observable actions: \`giving gift\`, \`receiving present\`.
+
+5. **If the user describes a full scene**, break it down into visual tags following the above structure.
+
+
+## Positive prompt template (quality prompt)
+You can skip few of them of course.
+\`\`\`
+{{{masterpiece}}}, {{{best quality}}}, {{amazing quality}}, {{{4k}}}, {{{High definition}}}, {{aesthetic}}, {{spectacular shadow}}, ,{{{shiny skin}}}, {{{{{{{beautiful light}}}}}}}, {{{{Vivid and realistic eyes, sharp and detailed irises, natural iris patterns, delicate and defined eyelashes, reflective highlights in the eyes, smooth and realistic eyelids, emotionally expressive gaze, eye highlights, finely detailed beautiful eyes}}}},
+
+0.9::artist:kat (bu-kunn)::,0.9::artist: sumiyao (amam)::, 0.8::aritst:tianliang duohe fangdongye::,0.5::artist:pelican (s030)::, 0.5::artist:null (nyanpyoun)::, 0.9::artist:mignon::, 1.2::aritst:ie_(raarami)}::, 1.4::artist:fanteam::, year 2024, year 2025,
+
+\`\`\`
+## Negative prompt template
+\`\`\`
+{{normal quality, bad quality, low quality, worst quality, lowres, displeasing, bad anatomy, bad perspective, bad proportions, bad face, bad arm, bad hands, bad leg, bad feet, bad reflection, bad link, bad source, wrong hand, wrong feet, missing, missing limb, missing eye, missing tooth, missing ear, missing finger, extra, extra faces, extra eyes, extra mouth, extra ears, extra breasts, extra arms, extra hands, extra legs, extra digits, fewer digits, cropped, cropped head, cropped torso, cropped arms, cropped legs, JPEG artifacts, signature, watermark, username, blurry, artist name, fat, duplicate, mutation, deformed, disfigured, long neck, unfinished, chromatic aberration, scan, scan artifacts, abstract, @_@, brown skin, glasses, vertical lines, vertical banding}},
+\`\`\`
+`;
 
 export const tools: Tool[] = [
 	{
@@ -68,6 +115,24 @@ export const tools: Tool[] = [
 					},
 					required: ['query']
 				}
+			},
+			{
+				name: 'imageGeneration',
+				description: `Generate an image based on the given prompts. Here\'s the guideline. \n${PROMPT_TEMPLATE}`,
+				parameters: {
+					type: Type.OBJECT,
+					properties: {
+						positivePrompt: {
+							type: Type.STRING,
+							description: 'The positive prompt describing the desired image content.'
+						},
+						negativePrompt: {
+							type: Type.STRING,
+							description: 'The negative prompt describing what to avoid in the image.'
+						}
+					},
+					required: ['positivePrompt', 'negativePrompt']
+				}
 			}
 		] as FunctionDeclaration[]
 	}
@@ -77,36 +142,34 @@ export const actualTool = {
 	alert: async (params: { message: string }) => {
 		alert(params.message);
 		return {
-			confirmation: 'Alert displayed successfully. (Surely Do not spam this. User hate it)'
+			sendBack: false,
+			data: makeFunctionResponse('alert', { message: 'Alert displayed' })
 		};
 	},
 	javascript: async (params: { expression: string }) => {
+		// From now, all logs will be captured
+		const originalConsoleLog = console.log;
+		let capturedLogs: string[] = [];
+		console.log = (...args: any[]) => {
+			originalConsoleLog.apply(console, args);
+			capturedLogs.push(args.join(' '));
+		};
+
+		try {
+			// eval(params.expression.replaceAll('\\n', '\n'));
+			let targetFunction = new Function(params.expression);
+			targetFunction();
+		} catch (error) {
+			capturedLogs.push(`Error: ${error instanceof Error ? error.message : String(error)}`);
+		}
+
+		// Restore original console.log
+		console.log = originalConsoleLog;
+
+		// Return the logs
 		return {
-			result: (() => {
-				// From now, all logs will be captured
-				const originalConsoleLog = console.log;
-				let capturedLogs: string[] = [];
-				console.log = (...args: any[]) => {
-					originalConsoleLog.apply(console, args);
-					capturedLogs.push(args.join(' '));
-				};
-
-				try {
-					// eval(params.expression.replaceAll('\\n', '\n'));
-					let targetFunction = new Function(params.expression);
-					targetFunction();
-				} catch (error) {
-					capturedLogs.push(`Error: ${error instanceof Error ? error.message : String(error)}`);
-				}
-
-				// Restore original console.log
-				console.log = originalConsoleLog;
-
-				// Return the logs
-				return {
-					confirmation: capturedLogs
-				};
-			})()
+			sendBack: true,
+			data: makeFunctionResponse('javascript', capturedLogs.join('\n'))
 		};
 	},
 	choice: async (params: { choices: string[] }) => {
@@ -131,15 +194,44 @@ export const actualTool = {
 		}
 
 		return {
-			confirmation: `User selected: ${choosenOption}`
+			sendBack: true,
+			data: makeFunctionResponse('choice', { choice: choosenOption })
 		};
 	},
 	query: async (params: { query: string }) => {
 		let res = await apiFetch(`/api/query?query=${encodeURIComponent(params.query)}`);
 		return {
-			confirmation: JSON.stringify(res, null, 2)
+			sendBack: true,
+			data: makeFunctionResponse('query', res)
+		};
+	},
+	imageGeneration: async (
+		params: { positivePrompt: string; negativePrompt: string } = {
+			positivePrompt: '',
+			negativePrompt: ''
+		}
+	) => {
+		return {
+			sendBack: false,
+			data: {
+				inlineData: {
+					mimeType: 'image/png',
+					data: await handleNAI(params.positivePrompt, params.negativePrompt, get(nai_api_key))
+				}
+			}
 		};
 	}
+};
+
+const makeFunctionResponse = (functionName: string, result: any) => {
+	return {
+		functionResponse: {
+			name: functionName,
+			response: {
+				output: result
+			}
+		}
+	};
 };
 
 // export let isAskingChoice = false;
@@ -155,3 +247,177 @@ export const toolConfig = {
 	// 	mode: FunctionCallingConfigMode.ANY
 	// }
 };
+
+const selectedModel = 'nai-diffusion-4-5-full';
+const selectedSize = '832x1216';
+
+// Returning image as a base64 data URL
+async function handleNAI(positivePrompts: string, negativePrompts: string, apiKey: string) {
+	console.log('Making direct API call...');
+
+	const requestBody = getNAIRequestBody(
+		positivePrompts,
+		negativePrompts,
+		selectedModel,
+		selectedSize,
+		Math.floor(Math.random() * 10000000)
+	);
+
+	try {
+		const response = await fetch('https://image.novelai.net/ai/generate-image', {
+			method: 'POST',
+			headers: {
+				Accept: '*/*',
+				// 'Accept-Language': 'ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3',
+				'Content-Type': 'binary/octet-stream',
+				Authorization: `Bearer ${apiKey}`
+			},
+			body: JSON.stringify(requestBody)
+		});
+
+		if (!response.ok) {
+			const errorText = await response.text();
+			throw new Error(`API Error: ${response.status} - ${errorText}`);
+		}
+
+		const readableStream = response.body;
+
+		if (!readableStream) {
+			throw new Error('No response body received');
+		}
+
+		// Get the image data from the stream
+		const reader = readableStream.getReader();
+		const chunks = [];
+		let done = false;
+		while (!done) {
+			const { value, done: isDone } = await reader.read();
+			if (isDone) {
+				done = true;
+			} else {
+				chunks.push(value);
+			}
+		}
+
+		console.log(chunks);
+
+		// Combine all chunks into a single array buffer
+		const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+		const combinedArray = new Uint8Array(totalLength);
+		let offset = 0;
+		for (const chunk of chunks) {
+			combinedArray.set(chunk, offset);
+			offset += chunk.length;
+		}
+
+		// Check if it's a ZIP file (magic bytes: 0x50 0x4b)
+		if (combinedArray[0] === 0x50 && combinedArray[1] === 0x4b) {
+			console.log('🗜️ Detected ZIP file, extracting with JSZip...');
+
+			try {
+				const zip = new JSZip();
+				const zipContent = await zip.loadAsync(combinedArray);
+
+				// Find the first image file
+				const imageFile = Object.keys(zipContent.files).find((filename) =>
+					filename.match(/\.(png|jpg|jpeg|gif|webp)$/i)
+				);
+
+				if (imageFile) {
+					console.log('� Found image file:', imageFile);
+					const imageData = await zipContent.files[imageFile].async('blob');
+
+					console.log('✅ Image extracted from ZIP successfully');
+					// return URL.createObjectURL(imageData);
+					// Return as base64 data URL
+					const arrayBuffer = await imageData.arrayBuffer();
+					const uint8Array = new Uint8Array(arrayBuffer);
+					const base64String = btoa(
+						uint8Array.reduce((data, byte) => data + String.fromCharCode(byte), '')
+					);
+					return base64String;
+				} else {
+					throw new Error('No image file found in ZIP');
+				}
+			} catch (zipError: any) {
+				console.error('❌ ZIP extraction failed:', zipError);
+				throw new Error(`Failed to extract ZIP: ${zipError.message}`);
+			}
+		} else {
+			// Not a ZIP file, handle as regular image
+			// const blob = new Blob([combinedArray]);
+			// const imageUrl = URL.createObjectURL(blob);
+			// generatedImage = imageUrl;
+			const base64String = btoa(
+				combinedArray.reduce((data, byte) => data + String.fromCharCode(byte), '')
+			);
+			return `data:image/png;base64,${base64String}`;
+		}
+	} catch (error) {
+		console.error('Error:', error);
+	}
+}
+
+export function getNAIRequestBody(
+	positive_prompts: any,
+	negative_prompts: any,
+	model: any,
+	size: any,
+	seed: any,
+	steps: number = 28,
+	guidance_scale: number = 7.5,
+	cfg_rescale: number = 1.0
+) {
+	const [width, height] = size.split('x').map(Number);
+
+	// console.log(`🔧 Preparing NAI request body with size: ${width}x${height}`);
+
+	return {
+		action: 'generate',
+		input: positive_prompts,
+		model: model,
+		parameters: {
+			add_original_image: true,
+			autoSmea: false,
+			cfg_rescale: cfg_rescale,
+			characterPrompts: [],
+			controlnet_strength: 1,
+			dynamic_thresholding: false,
+			height: height,
+			inpaintImg2ImgStrength: 1,
+			legacy: false,
+			legacy_uc: false,
+			legacy_v3_extend: false,
+			n_samples: 1,
+			negative_prompt: negative_prompts,
+			noise_schedule: 'karras',
+			normalize_reference_strength_multiple: true,
+			params_version: 3,
+			qualityToggle: true,
+			sampler: 'k_euler',
+			scale: guidance_scale,
+			seed: seed,
+			skip_cfg_above_sigma: null,
+			steps: steps,
+			stream: 'msgpack',
+			ucPreset: 4,
+			use_coords: false,
+			v4_negative_prompt: {
+				caption: {
+					base_caption: negative_prompts,
+					char_captions: []
+				},
+				legacy_uc: false
+			},
+			v4_prompt: {
+				caption: {
+					base_caption: positive_prompts,
+					char_captions: []
+				},
+				use_coords: false,
+				use_order: true
+			},
+			width: width
+		}
+	};
+}

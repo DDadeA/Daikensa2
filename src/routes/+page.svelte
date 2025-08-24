@@ -11,7 +11,7 @@
 	} from '@google/genai';
 	import type { Part, Content } from '@google/genai';
 	import { tools, actualTool, cancelToolAwait } from '$lib/tools';
-	import { streamingText } from '$lib/stores';
+	import { streamingText, nai_api_key } from '$lib/stores';
 	import { apiFetch } from '$lib/api';
 	import { isAskingChoice, choiceOptions, handleChoice } from '$lib/tools';
 
@@ -24,6 +24,7 @@
 	let messageList: Array<Message> = [];
 
 	let inputMessage: string = '';
+	let inputImages: File[] = [];
 	// let streamingText: string = ''; // Placeholder for streaming text
 
 	let GEMINI_API_KEY: string;
@@ -34,6 +35,7 @@
 	let GEMINI_THINKING_BUDGET: number;
 	let GEMINI_SYSTEM_PROMPT: string;
 	let GEMINI_DO_STREAMING: boolean; // Toggle for streaming mode
+	const IMAGE_RECENT_LIMIT = 1;
 
 	let currentTheme: 'light' | 'dark' = 'light';
 
@@ -48,6 +50,9 @@
 			localStorage.getItem('GEMINI_SYSTEM_PROMPT') || 'You are a helpful assistant.';
 		currentTheme = (localStorage.getItem('theme') as 'light' | 'dark') || 'light';
 		GEMINI_DO_STREAMING = localStorage.getItem('GEMINI_DO_STREAMING') === 'true';
+
+		// nai_api_key = localStorage.getItem('nai_api_key') || '';
+		nai_api_key.set(localStorage.getItem('nai_api_key') || '');
 		applyTheme(currentTheme);
 	};
 
@@ -101,6 +106,21 @@
 				}
 			});
 		}
+
+		// Ctrl + V for paste image
+		document.addEventListener('paste', (event) => {
+			const items = event.clipboardData?.items || [];
+			for (const item of items) {
+				if (item.kind === 'file') {
+					const file = item.getAsFile();
+					if (file) {
+						addImage(file);
+						console.log('Pasted image file:', file);
+						// event.preventDefault();
+					}
+				}
+			}
+		});
 	});
 
 	const initializeAuthToken = () => {
@@ -220,7 +240,7 @@
 	}; // Placeholder for streaming message
 
 	let AUTO_TIMESTAMP: boolean = true; // Auto timestamp toggle
-	const handleSend = () => {
+	const handleSend = async () => {
 		if (isMessageStreaming) {
 			console.warn('Message is currently being streamed. Please wait.');
 			return; // Prevent sending a new message while streaming
@@ -256,6 +276,83 @@
 				role: 'user',
 				parts: [{ text: inputMessage }]
 			};
+
+			if (newMessage && inputImages.length > 0) {
+				for (const image of inputImages) {
+					newMessage.parts?.push({
+						inlineData: {
+							mimeType: image.type,
+							data: await new Promise<string>((resolve, reject) => {
+								const reader = new FileReader();
+								reader.onload = () => {
+									const base64String = (reader.result as string).split(',')[1]; // Extract base64 string
+									resolve(base64String);
+								};
+								reader.onerror = (error) => reject(error);
+								reader.readAsDataURL(image); // Read file as data URL
+							})
+						}
+					});
+				}
+				inputImages = []; // Clear input images after adding to context
+			}
+
+			// Remove images in history if exeedes IMAGE_RECENT_LIMIT
+
+			const imageParts = messageList
+				.flatMap((msg) => msg.parts || [])
+				.filter((part) => part.inlineData && part.inlineData.data);
+			if (imageParts.length >= IMAGE_RECENT_LIMIT) {
+				const excessCount = imageParts.length - IMAGE_RECENT_LIMIT;
+				let removedCount = 0;
+
+				// Iterate through messageList to remove excess images
+				let modifiedMessages = new Set<string | undefined>(); // To track which messages have been modified
+				for (const msg of messageList) {
+					if (removedCount >= excessCount) break; // Stop if we've removed enough images
+
+					if (msg.parts) {
+						msg.parts = msg.parts.filter((part) => {
+							if (part.inlineData && part.inlineData.data && removedCount < excessCount) {
+								removedCount++;
+								modifiedMessages.add(msg.id);
+								return false; // Remove this image part
+							}
+							return true; // Keep this part
+						});
+					}
+				}
+
+				// Also remove(apply changes) to the DB
+				for (const msgId of modifiedMessages) {
+					console.log(`Removed excess images from message ID: ${msgId}`);
+
+					let msg = messageList.find((msg) => msg.id === msgId);
+
+					apiFetch(`/api/message/`, {
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json'
+						},
+						body: JSON.stringify({
+							id: msgId,
+							parts: msg?.parts || [],
+							role: msg?.role || 'user',
+							conversation_id: msg?.conversation_id || ''
+							// created_at: msg?.created_at || new Date().toISOString(),
+						})
+					})
+						.catch((error) => {
+							console.error('Error updating message after removing images:', error);
+						})
+						.then((data) => {
+							console.log('Message updated after removing images:', data);
+						});
+				}
+			}
+
+			// messageList = [...messageList]; // Trigger Svelte reactivity
+
 			messageList = [...messageList, newMessage]; // Add the new message to the message list
 			scrollToBottom();
 
@@ -392,6 +489,11 @@
 		return streamingMessage; // Return the final streaming message
 	};
 
+	const addImage = (image: any) => {
+		console.log('Adding image:', image);
+		inputImages = [...inputImages, image];
+	};
+
 	const handleAPI = async () => {
 		scrollToBottom();
 		// -- // Create entire context for the LLM API from the messageList
@@ -484,14 +586,7 @@
 				conversation_id: currentConversationID,
 				role: 'user',
 				parts: [
-					{
-						functionResponse: {
-							name: functionName,
-							response: {
-								output: toolResult
-							}
-						}
-					}
+					toolResult.data as any // Assuming toolResult is of type Part
 				]
 			};
 
@@ -508,11 +603,16 @@
 				body: JSON.stringify(resultMessage)
 			});
 
-			handleAPI(); // Call the API handler to process the result message
+			scrollToBottom();
+
+			if (toolResult.sendBack) {
+				handleAPI(); // Call the API handler to process the result message
+			}
 		}
 	};
 
 	const receiveStream = async (context: any, streamingMessage: any) => {
+		[];
 		try {
 			let response = await fetch(
 				`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:streamGenerateContent?key=${GEMINI_API_KEY}&alt=sse`,
@@ -763,11 +863,24 @@
 						step="0.01"
 					/>
 					<br />
+					<span>GEMINI_API_KEY</span>
 					<input
 						type="password"
 						placeholder="API_KEY"
 						bind:value={GEMINI_API_KEY}
 						oninput={() => localStorage.setItem('GEMINI_API_KEY', GEMINI_API_KEY)}
+					/>
+					<br />
+					<span>NAI_API_KEY</span>
+					<input
+						type="password"
+						placeholder="NAI_API_KEY"
+						bind:value={$nai_api_key}
+						oninput={(e) => {
+							// nai_api_key.set((e.target as HTMLInputElement).value);
+
+							localStorage.setItem('nai_api_key', (e.target as HTMLInputElement).value);
+						}}
 					/>
 					<textarea
 						placeholder="system prompt"
@@ -847,6 +960,24 @@
 				{/each}
 			</ul>
 		</div>
+	{/if}
+	{#if inputImages.length > 0}
+		<div class="image-preview">
+			{#each inputImages as image}
+				<div>
+					<button
+						onclick={() => {
+							inputImages = inputImages.filter((img) => img !== image);
+						}}
+						aria-label="Remove image"
+						style="position: absolute; margin-left: -10px; margin-top: -10px; z-index: 10; background-color: red; color: white; border: none; border-radius: 50%; width: 20px; height: 20px; font-size: 14px; line-height: 18px; text-align: center; cursor: pointer;"
+						>×</button
+					>
+					<img src={URL.createObjectURL(image)} alt="User uploaded image" />
+				</div>
+			{/each}
+		</div>
+		<!-- <div style="width: 100%; height: 1px; border-bottom: 1px solid var(--border-primary); margin: 10px 0;"></div> -->
 	{/if}
 </div>
 
@@ -1135,7 +1266,7 @@
 		flex-direction: column;
 		gap: 10px;
 
-		opacity: 0.95;
+		opacity: 0.5;
 	}
 	.choice-prompt p {
 		margin: 0;
@@ -1164,5 +1295,30 @@
 	}
 	.choice-prompt li:active {
 		background-color: var(--bg-active);
+	}
+
+	.image-preview {
+		position: fixed;
+		bottom: 100px;
+		left: 50%;
+		transform: translateX(-50%);
+		width: 80%;
+		max-width: 600px;
+		min-height: 100px;
+		max-height: 200px;
+		overflow-x: auto;
+
+		display: flex;
+		flex-wrap: wrap;
+		gap: 10px;
+		margin-top: 10px;
+		border: 1px solid var(--border-primary);
+		border-radius: 4px;
+		padding: 10px;
+		background-color: var(--bg-secondary);
+	}
+	.image-preview img {
+		max-height: 150px;
+		border-radius: 4px;
 	}
 </style>
