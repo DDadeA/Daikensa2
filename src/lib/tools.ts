@@ -138,11 +138,18 @@ export const tools: Tool[] = [
 	}
 ];
 
-export const actualTool = {
+interface ToolResult {
+	sendBack: boolean;
+	role: 'user' | 'model' | undefined;
+	data: any;
+}
+
+export const actualTool: Record<string, (params: any) => Promise<ToolResult | null>> = {
 	alert: async (params: { message: string }) => {
 		alert(params.message);
 		return {
 			sendBack: false,
+			role: 'user',
 			data: makeFunctionResponse('alert', { message: 'Alert displayed' })
 		};
 	},
@@ -169,6 +176,7 @@ export const actualTool = {
 		// Return the logs
 		return {
 			sendBack: true,
+			role: 'user',
 			data: makeFunctionResponse('javascript', capturedLogs.join('\n'))
 		};
 	},
@@ -195,6 +203,7 @@ export const actualTool = {
 
 		return {
 			sendBack: true,
+			role: 'user',
 			data: makeFunctionResponse('choice', { choice: choosenOption })
 		};
 	},
@@ -202,6 +211,7 @@ export const actualTool = {
 		let res = await apiFetch(`/api/query?query=${encodeURIComponent(params.query)}`);
 		return {
 			sendBack: true,
+			role: 'user',
 			data: makeFunctionResponse('query', res)
 		};
 	},
@@ -218,7 +228,8 @@ export const actualTool = {
 					mimeType: 'image/png',
 					data: await handleNAI(params.positivePrompt, params.negativePrompt, get(nai_api_key))
 				}
-			}
+			},
+			role: 'model'
 		};
 	}
 };
@@ -351,7 +362,7 @@ async function handleNAI(positivePrompts: string, negativePrompts: string, apiKe
 			const base64String = btoa(
 				combinedArray.reduce((data, byte) => data + String.fromCharCode(byte), '')
 			);
-			return `data:image/png;base64,${base64String}`;
+			return base64String;
 		}
 	} catch (error) {
 		console.error('Error:', error);

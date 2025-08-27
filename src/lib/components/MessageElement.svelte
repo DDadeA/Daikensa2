@@ -27,6 +27,20 @@
 
 					{#if part.text && part.text.length > 0}
 						{@html marked.parse(part.text)}
+					{:else if part.inlineData && part.inlineData.data}
+						{#if part.inlineData.data.startsWith('data:image')}
+							<img
+								src={part.inlineData.data}
+								alt="User uploaded image"
+								style=" max-width: 70%; border-radius: 4px;"
+							/>
+						{:else}
+							<img
+								src={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
+								alt="User uploaded image"
+								style=" max-width: 70%; border-radius: 4px;"
+							/>
+						{/if}
 					{:else}
 						<details>{JSON.stringify(part)}</details>
 					{/if}

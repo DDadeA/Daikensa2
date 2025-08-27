@@ -584,7 +584,7 @@
 			const resultMessage: Message = {
 				id: randomUUID(),
 				conversation_id: currentConversationID,
-				role: 'user',
+				role: toolResult.role || 'user',
 				parts: [
 					toolResult.data as any // Assuming toolResult is of type Part
 				]
@@ -1249,7 +1249,7 @@
 	/* ------- */
 	.choice-prompt {
 		position: fixed;
-		bottom: 150px;
+		top: 50px;
 		left: 50%;
 		transform: translateX(-50%);
 		background-color: var(--bg-secondary);
@@ -1266,7 +1266,7 @@
 		flex-direction: column;
 		gap: 10px;
 
-		opacity: 0.5;
+		opacity: 0.8;
 	}
 	.choice-prompt p {
 		margin: 0;
