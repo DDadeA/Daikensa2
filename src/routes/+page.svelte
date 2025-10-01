@@ -54,8 +54,8 @@
 		GEMINI_THINKING = localStorage.getItem('GEMINI_THINKING') === 'true';
 		GEMINI_INCLUDE_THINKING = localStorage.getItem('GEMINI_INCLUDE_THINKING') === 'true';
 		GEMINI_THINKING_BUDGET = parseInt(localStorage.getItem('GEMINI_THINKING_BUDGET') || '512', 10);
-		GEMINI_SYSTEM_PROMPT =
-			localStorage.getItem('GEMINI_SYSTEM_PROMPT') || 'You are a helpful assistant.';
+		// GEMINI_SYSTEM_PROMPT =
+		// localStorage.getItem('GEMINI_SYSTEM_PROMPT') || 'You are a helpful assistant.';
 		currentTheme = (localStorage.getItem('theme') as 'light' | 'dark') || 'light';
 		GEMINI_DO_STREAMING = localStorage.getItem('GEMINI_DO_STREAMING') === 'true';
 
@@ -187,8 +187,10 @@
 
 				// Get first conversation ID if available
 				if (data.length > 0) {
+					console.log(data[0]);
 					conversationList = data; // Assuming the response is an array of conversations
 					currentConversationID = data[0].id; // Set the first conversation as the current one
+
 					updateMessageList(currentConversationID); // Fetch messages for the first conversation
 				} else {
 					console.warn('No conversations found');
@@ -214,6 +216,10 @@
 
 	const updateMessageList = (conversationID: string = currentConversationID) => {
 		loadingMessages = true; // Set loading state for messages
+
+		GEMINI_SYSTEM_PROMPT =
+			(conversationList.find((conv) => conv.id === conversationID)?.settings || {}).systemPrompt ||
+			'You are a helpful assistant.';
 
 		// Fetching messages for a specific conversation
 		apiFetch(`/api/message?conversation_id=${conversationID}`, {
@@ -1025,7 +1031,28 @@
 					<textarea
 						placeholder="system prompt"
 						bind:value={GEMINI_SYSTEM_PROMPT}
-						oninput={() => localStorage.setItem('GEMINI_SYSTEM_PROMPT', GEMINI_SYSTEM_PROMPT)}
+						oninput={() =>
+							// Fetch to conversation
+							apiFetch(`/api/conversation/`, {
+								method: 'POST',
+								headers: {
+									'Content-Type': 'application/json'
+								},
+								body: JSON.stringify({
+									id: currentConversationID,
+									title: conversationList.find((convo) => convo.id === currentConversationID)
+										?.title,
+									settings: {
+										systemPrompt: GEMINI_SYSTEM_PROMPT
+									}
+								})
+							})
+								.then(() => {
+									// Successfully updated system prompt
+								})
+								.catch((error) => {
+									console.error('Error updating system prompt:', error);
+								})}
 					></textarea>
 					<br />
 				</div>
