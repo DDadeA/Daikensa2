@@ -16,11 +16,11 @@ export const handle: Handle = async ({ event, resolve }) => {
 			}
 
 			try {
-				const user = await pool.query('SELECT * FROM users WHERE passkey = $1', [passkey]);
+				const dbResult = await pool.query('SELECT * FROM users WHERE passkey = $1', [passkey]);
 
 				// 검증된 사용자 정보를 event.locals에 저장하여
 				// +server.ts 파일에서 접근할 수 있도록 합니다.
-				event.locals.user = user;
+				event.locals.user = dbResult.rows[0];
 			} catch (error) {
 				console.error('Database query error:', error);
 				return json({ message: '유효하지 않은 토큰입니다.' }, { status: 401 });
