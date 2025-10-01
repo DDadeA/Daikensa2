@@ -22,9 +22,17 @@
 	let conversationList: Array<Conversation> = [];
 	let currentConversationID: string = '';
 	let messageList: Array<Message> = [];
+	let tokenUsage = 0;
 
 	let inputMessage: string = '';
-	let inputImages: File[] = [];
+	let inputDatas: File[] = [];
+	let showFileInputModal: boolean = false;
+	let showAudioRecorder: boolean = false;
+	let isRecording: boolean = false;
+	let mediaRecorder: MediaRecorder | null = null;
+	let audioChunks: Blob[] = [];
+	let recordingTime: number = 0;
+	let recordingInterval: number | null = null;
 	// let streamingText: string = ''; // Placeholder for streaming text
 
 	let GEMINI_API_KEY: string;
@@ -114,8 +122,8 @@
 				if (item.kind === 'file') {
 					const file = item.getAsFile();
 					if (file) {
-						addImage(file);
-						console.log('Pasted image file:', file);
+						addData(file);
+						console.log('Pasted data file:', file);
 						// event.preventDefault();
 					}
 				}
@@ -277,11 +285,11 @@
 				parts: [{ text: inputMessage }]
 			};
 
-			if (newMessage && inputImages.length > 0) {
-				for (const image of inputImages) {
+			if (newMessage && inputDatas.length > 0) {
+				for (const linedata of inputDatas) {
 					newMessage.parts?.push({
 						inlineData: {
-							mimeType: image.type,
+							mimeType: linedata.type,
 							data: await new Promise<string>((resolve, reject) => {
 								const reader = new FileReader();
 								reader.onload = () => {
@@ -289,12 +297,12 @@
 									resolve(base64String);
 								};
 								reader.onerror = (error) => reject(error);
-								reader.readAsDataURL(image); // Read file as data URL
+								reader.readAsDataURL(linedata); // Read file as data URL
 							})
 						}
 					});
 				}
-				inputImages = []; // Clear input images after adding to context
+				inputDatas = []; // Clear input images after adding to context
 			}
 
 			// Remove images in history if exeedes IMAGE_RECENT_LIMIT
@@ -440,10 +448,23 @@
 		);
 
 		let data = await response.json();
+		// console.log('Received full response:', data);
+		tokenUsage = data?.usageMetadata?.totalTokenCount || -1;
 
 		if (!(data.candidates && data.candidates.length > 0)) {
 			console.warn('No candidates found in the chunk');
-			throw new Error('No candidates found in the response chunk');
+			// throw new Error('No candidates found in the response chunk');
+			// return streamingMessage; // Return the empty streaming message
+
+			// Retry
+			if (depth < 3) {
+				console.warn(`Retrying receive() due to missing candidates (attempt ${depth + 1})`);
+				streamingText.set(`Receive attempt(candidates) ${depth + 1}`); // Reset streaming text
+				return await receive(context, streamingMessage, depth + 1);
+			} else {
+				console.error('Max retry attempts reached. Returning empty streaming message.');
+				return streamingMessage; // Return the empty streaming message after retries
+			}
 		}
 
 		// If the chunk contains candidates, process the first candidate
@@ -489,9 +510,125 @@
 		return streamingMessage; // Return the final streaming message
 	};
 
-	const addImage = (image: any) => {
-		console.log('Adding image:', image);
-		inputImages = [...inputImages, image];
+	const importFile = (isImage: boolean = false) => {
+		// If not recording, Open the file picker
+		const fileInput = document.createElement('input');
+		fileInput.type = 'file';
+		fileInput.accept = isImage ? 'image/*' : '*/*';
+		fileInput.onchange = (event) => {
+			if (!event.target) return;
+			const files = event.target.files;
+
+			if (files && files.length > 0) {
+				const file = files[0];
+				addData(file);
+			}
+		};
+		fileInput.click();
+	};
+
+	const recordAudio = () => {
+		showAudioRecorder = true;
+	};
+
+	const startRecording = async () => {
+		try {
+			const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+			mediaRecorder = new MediaRecorder(stream);
+			audioChunks = [];
+			recordingTime = 0;
+
+			mediaRecorder.ondataavailable = (event) => {
+				audioChunks.push(event.data);
+			};
+
+			mediaRecorder.onstop = () => {
+				const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+				const audioFile = new File([audioBlob], `recording-${Date.now()}.webm`, {
+					type: 'audio/webm'
+				});
+				addData(audioFile);
+
+				// Clean up
+				stream.getTracks().forEach((track) => track.stop());
+				if (recordingInterval) {
+					clearInterval(recordingInterval);
+					recordingInterval = null;
+				}
+			};
+
+			mediaRecorder.start();
+			isRecording = true;
+
+			// Start timer
+			recordingInterval = setInterval(() => {
+				recordingTime++;
+			}, 1000);
+		} catch (error) {
+			console.error('Error accessing microphone:', error);
+			alert(
+				'Error accessing microphone. Please make sure you have given permission to use the microphone.'
+			);
+		}
+	};
+
+	const stopRecording = () => {
+		if (mediaRecorder && mediaRecorder.state === 'recording') {
+			mediaRecorder.stop();
+			isRecording = false;
+			showAudioRecorder = false;
+		}
+	};
+
+	const cancelRecording = () => {
+		if (mediaRecorder) {
+			if (mediaRecorder.state === 'recording') {
+				mediaRecorder.stop();
+			}
+			// Clean up without saving
+			if (recordingInterval) {
+				clearInterval(recordingInterval);
+				recordingInterval = null;
+			}
+			const stream = mediaRecorder.stream;
+			if (stream) {
+				stream.getTracks().forEach((track) => track.stop());
+			}
+		}
+		isRecording = false;
+		showAudioRecorder = false;
+		audioChunks = [];
+		recordingTime = 0;
+	};
+
+	const formatTime = (seconds: number): string => {
+		const mins = Math.floor(seconds / 60);
+		const secs = seconds % 60;
+		return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+	};
+
+	const addData = (inlineData?: any) => {
+		if (!inlineData) {
+			showFileInputModal = true;
+			// const isImage = false;
+			// // Open modal (image / file / record audio button)
+
+			// // If not recording, Open the file picker
+			// const fileInput = document.createElement('input');
+			// fileInput.type = 'file';
+			// fileInput.accept = isImage ? 'image/*' : '*/*';
+			// fileInput.onchange = (event) => {
+			// 	const files = event.target.files;
+			// 	if (files && files.length > 0) {
+			// 		const file = files[0];
+			// 		addData(file);
+			// 	}
+			// };
+			// fileInput.click();
+			return;
+		}
+		console.log('Adding data:', inlineData);
+		inputDatas = [...inputDatas, inlineData];
 	};
 
 	const handleAPI = async () => {
@@ -760,7 +897,10 @@
 <div id="app">
 	<!-- Main application container -->
 	<details>
-		<summary>{conversationList.find((convo) => convo.id === currentConversationID)?.title}</summary>
+		<summary
+			>{conversationList.find((convo) => convo.id === currentConversationID)?.title}
+			{tokenUsage > 0 ? ` - (${tokenUsage} tokens)` : ''}</summary
+		>
 		<div id="header">
 			<p>{loadingConversations ? 'Loading conversations...' : 'Chat:'}</p>
 			<select
@@ -940,7 +1080,11 @@
 	</div>
 
 	<div id="input-container">
-		<button>+</button>
+		<button
+			onclick={() => {
+				showFileInputModal = true;
+			}}>+</button
+		>
 		<textarea placeholder="메시지 입력" bind:value={inputMessage}></textarea>
 		<button id="send-button" onclick={() => handleSend()} aria-label="Send message">
 			<span
@@ -961,23 +1105,85 @@
 			</ul>
 		</div>
 	{/if}
-	{#if inputImages.length > 0}
+	{#if inputDatas.length > 0}
 		<div class="image-preview">
-			{#each inputImages as image}
+			{#each inputDatas as inlineData}
 				<div>
 					<button
 						onclick={() => {
-							inputImages = inputImages.filter((img) => img !== image);
+							inputDatas = inputDatas.filter((img) => img !== inlineData);
 						}}
 						aria-label="Remove image"
 						style="position: absolute; margin-left: -10px; margin-top: -10px; z-index: 10; background-color: red; color: white; border: none; border-radius: 50%; width: 20px; height: 20px; font-size: 14px; line-height: 18px; text-align: center; cursor: pointer;"
 						>×</button
 					>
-					<img src={URL.createObjectURL(image)} alt="User uploaded image" />
+					{#if inlineData.type.startsWith('video/')}
+						<video
+							src={URL.createObjectURL(inlineData)}
+							controls
+							style="max-width: 200px; max-height: 200px; border: 1px solid var(--border-primary); border-radius: 4px;"
+						></video>
+					{:else if inlineData.type.startsWith('audio/')}
+						<audio
+							src={URL.createObjectURL(inlineData)}
+							controls
+							style="max-width: 200px; max-height: 50px; border: 1px solid var(--border-primary); border-radius: 4px;"
+						></audio>
+					{:else}
+						<img src={URL.createObjectURL(inlineData)} alt="User uploaded image" />
+					{/if}
 				</div>
 			{/each}
 		</div>
 		<!-- <div style="width: 100%; height: 1px; border-bottom: 1px solid var(--border-primary); margin: 10px 0;"></div> -->
+	{/if}
+	{#if showFileInputModal}
+		<div class="file-input-modal">
+			<!-- Image / File / Recording Audio -->
+			<!-- Image icon -->
+			<button onclick={() => importFile(true)}>Image</button>
+			<button onclick={() => importFile(false)}>File</button>
+			<button
+				onclick={() => {
+					showAudioRecorder = true;
+					showFileInputModal = false;
+				}}>Record Audio</button
+			>
+			<button onclick={() => (showFileInputModal = false)}>Close</button>
+		</div>
+	{/if}
+	{#if showAudioRecorder}
+		<div class="audio-recorder-modal">
+			<div class="recorder-content">
+				<h3>Audio Recorder</h3>
+				<div class="recorder-controls">
+					{#if !isRecording}
+						<button class="record-button" onclick={() => startRecording()}>
+							<span class="record-icon">🎤</span>
+							Start Recording
+						</button>
+					{:else}
+						<div class="recording-indicator">
+							<span class="pulse-dot"></span>
+							Recording: {formatTime(recordingTime)}
+						</div>
+						<div class="recording-buttons">
+							<button class="stop-button" onclick={() => stopRecording()}>
+								<span>⏹️</span>
+								Stop & Save
+							</button>
+							<button class="cancel-button" onclick={() => cancelRecording()}>
+								<span>❌</span>
+								Cancel
+							</button>
+						</div>
+					{/if}
+				</div>
+				{#if !isRecording}
+					<button class="close-button" onclick={() => (showAudioRecorder = false)}>Close</button>
+				{/if}
+			</div>
+		</div>
 	{/if}
 </div>
 
@@ -1320,5 +1526,188 @@
 	.image-preview img {
 		max-height: 150px;
 		border-radius: 4px;
+	}
+
+	.file-input-modal {
+		position: fixed;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		background-color: var(--bg-secondary);
+		color: var(--text-primary);
+		padding: 20px;
+		border-radius: 8px;
+		box-shadow: 0 4px 20px var(--shadow-medium);
+		z-index: 1000;
+		border: 1px solid var(--border-primary);
+
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		min-width: 250px;
+	}
+
+	.file-input-modal button {
+		padding: 12px 16px;
+		border: 1px solid var(--border-primary);
+		border-radius: 4px;
+		background-color: var(--bg-tertiary);
+		color: var(--text-primary);
+		cursor: pointer;
+		transition: background-color 0.3s ease;
+		font-size: 14px;
+	}
+
+	.file-input-modal button:hover {
+		background-color: var(--bg-hover);
+	}
+
+	.audio-recorder-modal {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background-color: rgba(0, 0, 0, 0.5);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 1001;
+	}
+
+	.recorder-content {
+		background-color: var(--bg-secondary);
+		color: var(--text-primary);
+		padding: 30px;
+		border-radius: 12px;
+		box-shadow: 0 8px 32px var(--shadow-medium);
+		border: 1px solid var(--border-primary);
+		min-width: 300px;
+		text-align: center;
+	}
+
+	.recorder-content h3 {
+		margin: 0 0 20px 0;
+		font-size: 18px;
+		font-weight: 600;
+	}
+
+	.recorder-controls {
+		display: flex;
+		flex-direction: column;
+		gap: 15px;
+		align-items: center;
+	}
+
+	.record-button {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 15px 25px;
+		border: 2px solid #dc3545;
+		border-radius: 50px;
+		background-color: #dc3545;
+		color: white;
+		cursor: pointer;
+		font-size: 16px;
+		font-weight: 600;
+		transition: all 0.3s ease;
+	}
+
+	.record-button:hover {
+		background-color: #c82333;
+		border-color: #c82333;
+		transform: translateY(-2px);
+	}
+
+	.record-icon {
+		font-size: 18px;
+	}
+
+	.recording-indicator {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		font-size: 18px;
+		font-weight: 600;
+		color: #dc3545;
+	}
+
+	.pulse-dot {
+		width: 12px;
+		height: 12px;
+		background-color: #dc3545;
+		border-radius: 50%;
+		animation: pulse 1s infinite;
+	}
+
+	@keyframes pulse {
+		0% {
+			opacity: 1;
+			transform: scale(1);
+		}
+		50% {
+			opacity: 0.5;
+			transform: scale(1.2);
+		}
+		100% {
+			opacity: 1;
+			transform: scale(1);
+		}
+	}
+
+	.recording-buttons {
+		display: flex;
+		gap: 15px;
+	}
+
+	.stop-button,
+	.cancel-button {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 12px 20px;
+		border: 2px solid;
+		border-radius: 8px;
+		cursor: pointer;
+		font-size: 14px;
+		font-weight: 500;
+		transition: all 0.3s ease;
+	}
+
+	.stop-button {
+		border-color: #28a745;
+		background-color: #28a745;
+		color: white;
+	}
+
+	.stop-button:hover {
+		background-color: #218838;
+		border-color: #218838;
+	}
+
+	.cancel-button {
+		border-color: #6c757d;
+		background-color: var(--bg-tertiary);
+		color: var(--text-primary);
+	}
+
+	.cancel-button:hover {
+		background-color: var(--bg-hover);
+	}
+
+	.close-button {
+		margin-top: 15px;
+		padding: 10px 20px;
+		border: 1px solid var(--border-primary);
+		border-radius: 6px;
+		background-color: var(--bg-tertiary);
+		color: var(--text-primary);
+		cursor: pointer;
+		transition: background-color 0.3s ease;
+	}
+
+	.close-button:hover {
+		background-color: var(--bg-hover);
 	}
 </style>

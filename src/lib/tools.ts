@@ -50,6 +50,53 @@ You can skip few of them of course.
 \`\`\`
 `;
 
+const SQL_TEMPLATE = `
+Database Schema for Query Tool Usage
+This document outlines the structure of the database used to store our conversations. The database consists of two primary tables: conversations and messages.
+
+1. Table: conversations
+This table stores the metadata for each distinct conversation session.
+
+Columns:
+
+ - id (uuid): The unique identifier for the conversation. This is the primary key and is used to link messages to a conversation.
+ - title (text): The human-readable name of the conversation (e.g., '1-main', '2-main', '0-M'). This is typically used to find the corresponding id.
+ - created_at (timestamp with time zone): A timestamp indicating when the conversation was first created.
+ - updated_at (timestamp with time zone): A timestamp indicating the last time a message was added to the conversation.
+ - user_id (text): An identifier for the user associated with the conversation.
+2. Table: messages
+This table stores every individual message exchanged within all conversations.
+
+Columns:
+ - id (uuid): The unique identifier for each specific message.
+ - conversation_id (uuid): A foreign key that links the message to a specific session in the conversations table via its id.
+ - parts (jsonb): The content of the message itself, stored in a JSONB format.
+ - created_at (timestamp with time zone): A timestamp indicating precisely when the message was created.
+ - role (text): Indicates the sender of the message. The value is typically either 'user' or 'assistant'.
+3. Relationship & Common Usage
+To retrieve messages from a specific conversation (e.g., '3-main'), you must first find its unique id in the conversations table and then use that id to filter the messages table on the conversation_id column.
+
+Example Queries:
+
+To find the ID of a conversation:
+
+SELECT id FROM conversations WHERE title = '3-main';
+To retrieve the 10 most recent messages from a conversation:
+\`\`\`
+SELECT role, parts, created_at
+FROM messages
+WHERE conversation_id = (SELECT id FROM conversations WHERE title = '3-main')
+ORDER BY created_at DESC
+LIMIT 10;
+\`\`\`
+To count all messages in a conversation:
+\`\`\`
+SELECT COUNT(*)
+FROM messages
+WHERE conversation_id = (SELECT id FROM conversations WHERE title = '3-main');
+\`\`\`
+`;
+
 export const tools: Tool[] = [
 	{
 		functionDeclarations: [
@@ -104,7 +151,7 @@ export const tools: Tool[] = [
 			},
 			{
 				name: 'query',
-				description: 'Run a SQL query and return the result.',
+				description: `Run a SQL query and return the result. ￦n${SQL_TEMPLATE}`,
 				parameters: {
 					type: Type.OBJECT,
 					properties: {
@@ -129,9 +176,14 @@ export const tools: Tool[] = [
 						negativePrompt: {
 							type: Type.STRING,
 							description: 'The negative prompt describing what to avoid in the image.'
+						},
+						seed: {
+							type: Type.NUMBER,
+							description:
+								'The seed for random number generation to ensure reproducibility. If you change your expression or posture slightly in a row of images, keep the seed the same. In other cases, enter a random natural number that is not too long (about 12 characters)'
 						}
 					},
-					required: ['positivePrompt', 'negativePrompt']
+					required: ['positivePrompt', 'negativePrompt', 'seed']
 				}
 			}
 		] as FunctionDeclaration[]
@@ -216,9 +268,10 @@ export const actualTool: Record<string, (params: any) => Promise<ToolResult | nu
 		};
 	},
 	imageGeneration: async (
-		params: { positivePrompt: string; negativePrompt: string } = {
+		params: { positivePrompt: string; negativePrompt: string; seed: number } = {
 			positivePrompt: '',
-			negativePrompt: ''
+			negativePrompt: '',
+			seed: 1
 		}
 	) => {
 		return {
@@ -226,7 +279,12 @@ export const actualTool: Record<string, (params: any) => Promise<ToolResult | nu
 			data: {
 				inlineData: {
 					mimeType: 'image/png',
-					data: await handleNAI(params.positivePrompt, params.negativePrompt, get(nai_api_key))
+					data: await handleNAI(
+						params.positivePrompt,
+						params.negativePrompt,
+						get(nai_api_key),
+						params.seed
+					)
 				}
 			},
 			role: 'model'
@@ -263,7 +321,12 @@ const selectedModel = 'nai-diffusion-4-5-full';
 const selectedSize = '832x1216';
 
 // Returning image as a base64 data URL
-async function handleNAI(positivePrompts: string, negativePrompts: string, apiKey: string) {
+async function handleNAI(
+	positivePrompts: string,
+	negativePrompts: string,
+	apiKey: string,
+	seed: number
+) {
 	console.log('Making direct API call...');
 
 	const requestBody = getNAIRequestBody(
@@ -271,7 +334,8 @@ async function handleNAI(positivePrompts: string, negativePrompts: string, apiKe
 		negativePrompts,
 		selectedModel,
 		selectedSize,
-		Math.floor(Math.random() * 10000000)
+		// Math.floor(Math.random() * 10000000)
+		seed
 	);
 
 	try {
