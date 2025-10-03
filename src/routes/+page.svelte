@@ -413,7 +413,9 @@
 				referrer: document.location.href,
 				body: JSON.stringify({
 					contents: context,
-					system_instruction: GEMINI_SYSTEM_PROMPT,
+					system_instruction: {
+							parts: [{ text: GEMINI_SYSTEM_PROMPT }]
+						},,
 					tools: tools,
 					generation_config: {
 						maxOutputTokens: 8192,
@@ -770,7 +772,9 @@
 					referrer: document.location.href,
 					body: JSON.stringify({
 						contents: context,
-						system_instruction: GEMINI_SYSTEM_PROMPT,
+						system_instruction: {
+							parts: [{ text: GEMINI_SYSTEM_PROMPT }]
+						},
 						tools: tools,
 						generation_config: {
 							maxOutputTokens: 8192,
