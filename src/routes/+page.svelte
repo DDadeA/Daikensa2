@@ -32,7 +32,7 @@
 	let mediaRecorder: MediaRecorder | null = null;
 	let audioChunks: Blob[] = [];
 	let recordingTime: number = 0;
-	let recordingInterval: number | null = null;
+	let recordingInterval: any | null = null;
 	// let streamingText: string = ''; // Placeholder for streaming text
 
 	let GEMINI_API_KEY: string;
@@ -414,8 +414,8 @@
 				body: JSON.stringify({
 					contents: context,
 					system_instruction: {
-							parts: [{ text: GEMINI_SYSTEM_PROMPT }]
-						},,
+						parts: [{ text: GEMINI_SYSTEM_PROMPT }]
+					},
 					tools: tools,
 					generation_config: {
 						maxOutputTokens: 8192,
