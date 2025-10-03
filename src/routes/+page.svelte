@@ -408,11 +408,12 @@
 					// 'Accept-Language': 'ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3',
 					'Content-Type': 'application/json',
 					Connection: 'keep-alive',
-					'Keep-Alive': 'timeout=5, max=200'
+					'Keep-Alive': 'timeout=10, max=200'
 				},
 				referrer: document.location.href,
 				body: JSON.stringify({
 					contents: context,
+					system_instruction: GEMINI_SYSTEM_PROMPT,
 					tools: tools,
 					generation_config: {
 						maxOutputTokens: 8192,
@@ -769,6 +770,7 @@
 					referrer: document.location.href,
 					body: JSON.stringify({
 						contents: context,
+						system_instruction: GEMINI_SYSTEM_PROMPT,
 						tools: tools,
 						generation_config: {
 							maxOutputTokens: 8192,
