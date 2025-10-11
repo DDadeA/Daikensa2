@@ -105,11 +105,41 @@
 
 					// Check whether Shift is pressed
 					if (event.shiftKey) {
-						// Allow new line insertion
-						inputElement.value += '\n';
+						// Allow new line insertion at the cursor position
+						const start = inputElement.selectionStart;
+						const end = inputElement.selectionEnd;
+						inputMessage =
+							inputMessage.substring(0, start) +
+							'\n' +
+							inputMessage.substring(end, inputMessage.length);
+						// Move the cursor to the right position after inserting the new line
+						inputElement.selectionStart = inputElement.selectionEnd = start + 1;
+						return;
+					}
+
+					// If it's recording, stop recording
+					if (isRecording) {
+						stopRecording();
+						showAudioRecorder = false;
+						setTimeout(() => {
+							handleSend();
+						}, 200); // Slight delay to ensure recording stops before sending
+						return;
+					}
+
+					handleSend();
+				}
+
+				// LALT
+				if (event.altKey && event.key.toLowerCase() === 't') {
+					event.preventDefault();
+
+					if (!isRecording) {
+						startRecording();
+						showAudioRecorder = true;
 					} else {
-						// Send the message
-						handleSend();
+						stopRecording();
+						showAudioRecorder = false;
 					}
 				}
 			});
@@ -263,24 +293,24 @@
 		cancelToolAwait();
 		inputMessage = inputMessage.trim();
 
-		if (AUTO_TIMESTAMP && inputMessage) {
-			// KST
-			const now = new Date();
-			const utc = now.getTime() + now.getTimezoneOffset() * 60 * 1000;
-			const koreaTimeDiff = 9 * 60 * 60 * 1000;
-			const timestamp = new Date(utc + koreaTimeDiff)
-				.toLocaleString('ko-KR', {
-					timeZone: 'Asia/Seoul'
-				})
-				.replaceAll('. ', '.')
-				.replace('오전', 'AM')
-				.replace('오후', 'PM');
-
-			// Get current timestamp in KST
-			inputMessage = `${timestamp}\n${inputMessage}`; // Prepend timestamp to the message
-		}
-
 		if (inputMessage || inputDatas.length > 0) {
+			if (AUTO_TIMESTAMP) {
+				// KST
+				const now = new Date();
+				const utc = now.getTime() + now.getTimezoneOffset() * 60 * 1000;
+				const koreaTimeDiff = 9 * 60 * 60 * 1000;
+				const timestamp = new Date(utc + koreaTimeDiff)
+					.toLocaleString('ko-KR', {
+						timeZone: 'Asia/Seoul'
+					})
+					.replaceAll('. ', '.')
+					.replace('오전', 'AM')
+					.replace('오후', 'PM');
+
+				// Get current timestamp in KST
+				inputMessage = `${timestamp}\n${inputMessage}`; // Prepend timestamp to the message
+			}
+
 			// Plan
 			// - // Add it into messageList, send it to the llm api, then append it to the DB
 			// alert(randomUUID());
@@ -534,10 +564,6 @@
 			}
 		};
 		fileInput.click();
-	};
-
-	const recordAudio = () => {
-		showAudioRecorder = true;
 	};
 
 	const startRecording = async () => {
@@ -1163,7 +1189,7 @@
 							style="max-width: 200px; max-height: 50px; border: 1px solid var(--border-primary); border-radius: 4px;"
 						></audio>
 					{:else}
-						<img src={URL.createObjectURL(inlineData)} alt="User uploaded image" />
+						<img src={URL.createObjectURL(inlineData)} alt="User uploaded image?" />
 					{/if}
 				</div>
 			{/each}
@@ -1180,6 +1206,7 @@
 				onclick={() => {
 					showAudioRecorder = true;
 					showFileInputModal = false;
+					startRecording();
 				}}>Record Audio</button
 			>
 			<button onclick={() => (showFileInputModal = false)}>Close</button>
@@ -1203,7 +1230,19 @@
 						<div class="recording-buttons">
 							<button class="stop-button" onclick={() => stopRecording()}>
 								<span>⏹️</span>
-								Stop & Save
+								Stop
+							</button>
+							<button
+								class="send-button"
+								onclick={() => {
+									stopRecording();
+									setTimeout(() => {
+										handleSend();
+									}, 200);
+								}}
+							>
+								<span>⏫</span>
+								Sending NOW
 							</button>
 							<button class="cancel-button" onclick={() => cancelRecording()}>
 								<span>❌</span>
@@ -1693,7 +1732,7 @@
 		display: flex;
 		gap: 15px;
 	}
-
+	.send-button,
 	.stop-button,
 	.cancel-button {
 		display: flex;
@@ -1712,6 +1751,15 @@
 		border-color: #28a745;
 		background-color: #28a745;
 		color: white;
+	}
+	.send-button {
+		border-color: #007bff;
+		background-color: #007bff;
+		color: white;
+	}
+	.send-button:hover {
+		background-color: #0069d9;
+		border-color: #0069d9;
 	}
 
 	.stop-button:hover {

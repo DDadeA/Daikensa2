@@ -31,15 +31,35 @@
 						{#if part.inlineData.data.startsWith('data:image')}
 							<img
 								src={part.inlineData.data}
-								alt="User uploaded image"
+								alt="User uploaded image!"
 								style=" max-width: 70%; border-radius: 4px;"
 							/>
-						{:else}
+							<!-- {:else}
 							<img
 								src={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
 								alt="User uploaded image"
 								style=" max-width: 70%; border-radius: 4px;"
-							/>
+							/> -->
+						{:else if part.inlineData.data.startsWith('data:audio')}
+							<audio
+								src={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
+								controls
+								style=" max-width: 70%; border-radius: 4px;"
+							></audio>
+						{:else if part.inlineData.data.startsWith('data:video')}
+							<video
+								src={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
+								controls
+								style=" max-width: 70%; border-radius: 4px;"
+							></video>
+						{:else}
+							<!-- Download buttons with title -->
+							<a
+								href={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
+								download={'download'}
+								style=" display: inline-block; margin: 5px 0; padding: 5px 10px; background-color: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: 4px; color: var(--text-primary); text-decoration: none;"
+								>{'Download'}</a
+							>
 						{/if}
 					{:else}
 						<details>{JSON.stringify(part)}</details>
@@ -93,12 +113,26 @@
 								alt="User uploaded image"
 								style=" max-width: 70%; border-radius: 4px;"
 							/>
-						{:else}
-							<img
+						{:else if part.inlineData.mimeType.startsWith('audio')}
+							<audio
 								src={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
-								alt="User uploaded image"
+								controls
 								style=" max-width: 70%; border-radius: 4px;"
-							/>
+							></audio>
+						{:else if part.inlineData.mimeType.startsWith('video')}
+							<video
+								src={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
+								controls
+								style=" max-width: 70%; border-radius: 4px;"
+							></video>
+						{:else}
+							<!-- Download buttons with title -->
+							<a
+								href={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
+								download={'download'}
+								style=" display: inline-block; margin: 5px 0; padding: 5px 10px; background-color: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: 4px; color: var(--text-primary); text-decoration: none;"
+								>{'Download'}</a
+							>
 						{/if}
 					{:else}
 						<details>{JSON.stringify(part)}</details>
