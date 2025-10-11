@@ -43,7 +43,7 @@
 	let GEMINI_THINKING_BUDGET: number;
 	let GEMINI_SYSTEM_PROMPT: string;
 	let GEMINI_DO_STREAMING: boolean; // Toggle for streaming mode
-	const IMAGE_RECENT_LIMIT = 1;
+	const IMAGE_RECENT_LIMIT = 20; // Max number of recent images to keep in history
 
 	let currentTheme: 'light' | 'dark' = 'light';
 
@@ -280,7 +280,7 @@
 			inputMessage = `${timestamp}\n${inputMessage}`; // Prepend timestamp to the message
 		}
 
-		if (inputMessage) {
+		if (inputMessage || inputDatas.length > 0) {
 			// Plan
 			// - // Add it into messageList, send it to the llm api, then append it to the DB
 			// alert(randomUUID());
