@@ -43,7 +43,7 @@
 	let GEMINI_THINKING_BUDGET: number;
 	let GEMINI_SYSTEM_PROMPT: string;
 	let GEMINI_DO_STREAMING: boolean; // Toggle for streaming mode
-	const IMAGE_RECENT_LIMIT = 20; // Max number of recent images to keep in history
+	const IMAGE_RECENT_LIMIT = 5; // Max number of recent images to keep in history
 
 	let currentTheme: 'light' | 'dark' = 'light';
 
