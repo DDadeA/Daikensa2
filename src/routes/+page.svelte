@@ -151,6 +151,7 @@
 			for (const item of items) {
 				if (item.kind === 'file') {
 					const file = item.getAsFile();
+
 					if (file) {
 						addData(file);
 						console.log('Pasted data file:', file);
@@ -645,21 +646,7 @@
 	const addData = (inlineData?: any) => {
 		if (!inlineData) {
 			showFileInputModal = true;
-			// const isImage = false;
-			// // Open modal (image / file / record audio button)
 
-			// // If not recording, Open the file picker
-			// const fileInput = document.createElement('input');
-			// fileInput.type = 'file';
-			// fileInput.accept = isImage ? 'image/*' : '*/*';
-			// fileInput.onchange = (event) => {
-			// 	const files = event.target.files;
-			// 	if (files && files.length > 0) {
-			// 		const file = files[0];
-			// 		addData(file);
-			// 	}
-			// };
-			// fileInput.click();
 			return;
 		}
 		console.log('Adding data:', inlineData);

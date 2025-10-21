@@ -28,38 +28,37 @@
 					{#if part.text && part.text.length > 0}
 						{@html marked.parse(part.text)}
 					{:else if part.inlineData && part.inlineData.data}
-						{#if part.inlineData.data.startsWith('data:audio')}
+						{#if part.inlineData.data.startsWith('data:image') || part.inlineData.mimeType?.startsWith('image/')}
+							<img
+								src={part.inlineData.data.startsWith('data:image')
+									? part.inlineData.data
+									: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
+								alt="User uploaded image"
+								style=" max-width: 70%; border-radius: 4px;"
+							/>
+						{:else if part.inlineData.data.startsWith('data:audio') || part.inlineData.mimeType?.startsWith('audio/')}
 							<audio
-								src={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
+								src={part.inlineData.data.startsWith('data:audio')
+									? part.inlineData.data
+									: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
 								controls
 								style=" max-width: 70%; border-radius: 4px;"
 							></audio>
-						{:else if part.inlineData.data.startsWith('data:video')}
+						{:else if part.inlineData.data.startsWith('data:video') || part.inlineData.mimeType?.startsWith('video/')}
 							<video
-								src={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
+								src={part.inlineData.data.startsWith('data:video')
+									? part.inlineData.data
+									: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
 								controls
 								style=" max-width: 70%; border-radius: 4px;"
 							></video>
-							<!-- {:else} Currently, image data not starts with data:image
+						{:else}
 							<a
 								href={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
 								download={'download'}
 								style=" display: inline-block; margin: 5px 0; padding: 5px 10px; background-color: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: 4px; color: var(--text-primary); text-decoration: none;"
-								>{'Download'}</a
-							> -->
-						{:else}
-							<!-- {part.inlineData.data.startsWith('data:image')} -->
-							<img
-								src={part.inlineData.data}
-								alt="User uploaded image!"
-								style=" max-width: 70%; border-radius: 4px;"
-							/>
-							<!-- {:else}
-							<img
-								src={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
-								alt="User uploaded image"
-								style=" max-width: 70%; border-radius: 4px;"
-							/> -->
+								>{'Download (type: ' + part.inlineData.mimeType + ')'}</a
+							>
 						{/if}
 					{:else}
 						<details>{JSON.stringify(part)}</details>
@@ -107,21 +106,27 @@
 					{#if part.text && part.text.length > 0}
 						{@html marked.parse(part.text)}
 					{:else if part.inlineData && part.inlineData.data}
-						{#if part.inlineData.data.startsWith('data:image')}
+						{#if part.inlineData.data.startsWith('data:image') || part.inlineData.mimeType?.startsWith('image/')}
 							<img
-								src={part.inlineData.data}
+								src={part.inlineData.data.startsWith('data:image')
+									? part.inlineData.data
+									: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
 								alt="User uploaded image"
 								style=" max-width: 70%; border-radius: 4px;"
 							/>
-						{:else if part.inlineData.mimeType.startsWith('audio')}
+						{:else if part.inlineData.data.startsWith('data:audio') || part.inlineData.mimeType?.startsWith('audio/')}
 							<audio
-								src={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
+								src={part.inlineData.data.startsWith('data:audio')
+									? part.inlineData.data
+									: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
 								controls
 								style=" max-width: 70%; border-radius: 4px;"
 							></audio>
-						{:else if part.inlineData.mimeType.startsWith('video')}
+						{:else if part.inlineData.data.startsWith('data:video') || part.inlineData.mimeType?.startsWith('video/')}
 							<video
-								src={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
+								src={part.inlineData.data.startsWith('data:video')
+									? part.inlineData.data
+									: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
 								controls
 								style=" max-width: 70%; border-radius: 4px;"
 							></video>
@@ -131,8 +136,13 @@
 								href={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
 								download={'download'}
 								style=" display: inline-block; margin: 5px 0; padding: 5px 10px; background-color: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: 4px; color: var(--text-primary); text-decoration: none;"
-								>{'Download'}</a
+								>{'Download (type: ' + part.inlineData.mimeType + ')'}</a
 							>
+							<!-- <img
+								src={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
+								alt="User uploaded image"
+								style=" max-width: 70%; border-radius: 4px;"
+							/> -->
 						{/if}
 					{:else}
 						<details>{JSON.stringify(part)}</details>
