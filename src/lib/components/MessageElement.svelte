@@ -28,19 +28,7 @@
 					{#if part.text && part.text.length > 0}
 						{@html marked.parse(part.text)}
 					{:else if part.inlineData && part.inlineData.data}
-						{#if part.inlineData.data.startsWith('data:image')}
-							<img
-								src={part.inlineData.data}
-								alt="User uploaded image!"
-								style=" max-width: 70%; border-radius: 4px;"
-							/>
-							<!-- {:else}
-							<img
-								src={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
-								alt="User uploaded image"
-								style=" max-width: 70%; border-radius: 4px;"
-							/> -->
-						{:else if part.inlineData.data.startsWith('data:audio')}
+						{#if part.inlineData.data.startsWith('data:audio')}
 							<audio
 								src={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
 								controls
@@ -52,14 +40,26 @@
 								controls
 								style=" max-width: 70%; border-radius: 4px;"
 							></video>
-						{:else}
-							<!-- Download buttons with title -->
+							<!-- {:else} Currently, image data not starts with data:image
 							<a
 								href={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
 								download={'download'}
 								style=" display: inline-block; margin: 5px 0; padding: 5px 10px; background-color: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: 4px; color: var(--text-primary); text-decoration: none;"
 								>{'Download'}</a
-							>
+							> -->
+						{:else}
+							<!-- {part.inlineData.data.startsWith('data:image')} -->
+							<img
+								src={part.inlineData.data}
+								alt="User uploaded image!"
+								style=" max-width: 70%; border-radius: 4px;"
+							/>
+							<!-- {:else}
+							<img
+								src={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
+								alt="User uploaded image"
+								style=" max-width: 70%; border-radius: 4px;"
+							/> -->
 						{/if}
 					{:else}
 						<details>{JSON.stringify(part)}</details>
