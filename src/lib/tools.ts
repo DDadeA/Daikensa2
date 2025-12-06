@@ -36,15 +36,13 @@ If 대현자 wants to show, draw, or generate an anime-style image, follow the p
 5. **If the user describes a full scene**, break it down into visual tags following the above structure.
 
 
-## Positive prompt template (quality prompt)
-You can skip few of them of course.
+## Positive prompt template (quality prompt, please include these keywords except the special cases (skip eye related tags when eyes should not be visible))
 \`\`\`
 {{{masterpiece}}}, {{{best quality}}}, {{amazing quality}}, {{{4k}}}, {{{High definition}}}, {{aesthetic}}, {{spectacular shadow}}, ,{{{shiny skin}}}, {{{{{{{beautiful light}}}}}}}, {{{{Vivid and realistic eyes, sharp and detailed irises, natural iris patterns, delicate and defined eyelashes, reflective highlights in the eyes, smooth and realistic eyelids, emotionally expressive gaze, eye highlights, finely detailed beautiful eyes}}}},
-
 0.9::artist:kat (bu-kunn)::,0.9::artist: sumiyao (amam)::, 0.8::aritst:tianliang duohe fangdongye::,0.5::artist:pelican (s030)::, 0.5::artist:null (nyanpyoun)::, 0.9::artist:mignon::, 1.2::aritst:ie_(raarami)}::, 1.4::artist:fanteam::, year 2024, year 2025,
-
+[HERE ADD YOUR TAGS]
 \`\`\`
-## Negative prompt template
+## Negative prompt template (no need to modify except special cases. Always include these keywords into negative prompt)
 \`\`\`
 {{normal quality, bad quality, low quality, worst quality, lowres, displeasing, bad anatomy, bad perspective, bad proportions, bad face, bad arm, bad hands, bad leg, bad feet, bad reflection, bad link, bad source, wrong hand, wrong feet, missing, missing limb, missing eye, missing tooth, missing ear, missing finger, extra, extra faces, extra eyes, extra mouth, extra ears, extra breasts, extra arms, extra hands, extra legs, extra digits, fewer digits, cropped, cropped head, cropped torso, cropped arms, cropped legs, JPEG artifacts, signature, watermark, username, blurry, artist name, fat, duplicate, mutation, deformed, disfigured, long neck, unfinished, chromatic aberration, scan, scan artifacts, abstract, @_@, brown skin, glasses, vertical lines, vertical banding}},
 \`\`\`
