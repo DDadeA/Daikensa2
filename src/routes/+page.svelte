@@ -41,9 +41,10 @@
 	let GEMINI_THINKING: boolean;
 	let GEMINI_INCLUDE_THINKING: boolean;
 	let GEMINI_THINKING_BUDGET: number;
+	let GEMINI_THINKING_LEVEL: "low" | "medium" | "high";
 	let GEMINI_SYSTEM_PROMPT: string;
 	let GEMINI_DO_STREAMING: boolean; // Toggle for streaming mode
-	const IMAGE_RECENT_LIMIT = 5; // Max number of recent images to keep in history
+	let IMAGE_RECENT_LIMIT = 5; // Max number of recent images to keep in history
 
 	let currentTheme: 'light' | 'dark' = 'light';
 
@@ -54,6 +55,8 @@
 		GEMINI_THINKING = localStorage.getItem('GEMINI_THINKING') === 'true';
 		GEMINI_INCLUDE_THINKING = localStorage.getItem('GEMINI_INCLUDE_THINKING') === 'true';
 		GEMINI_THINKING_BUDGET = parseInt(localStorage.getItem('GEMINI_THINKING_BUDGET') || '512', 10);
+		GEMINI_THINKING_LEVEL =
+			(localStorage.getItem('GEMINI_THINKING_LEVEL') as 'low' | 'medium' | 'high') || 'high';
 		// GEMINI_SYSTEM_PROMPT =
 		// localStorage.getItem('GEMINI_SYSTEM_PROMPT') || 'You are a helpful assistant.';
 		currentTheme = (localStorage.getItem('theme') as 'light' | 'dark') || 'light';
@@ -61,6 +64,9 @@
 
 		// nai_api_key = localStorage.getItem('nai_api_key') || '';
 		nai_api_key.set(localStorage.getItem('nai_api_key') || '');
+
+		IMAGE_RECENT_LIMIT = parseInt(localStorage.getItem('IMAGE_RECENT_LIMIT') || '5', 10);
+
 		applyTheme(currentTheme);
 	};
 
@@ -454,7 +460,8 @@
 						topP: 0.9,
 						topK: 128,
 						thinkingConfig: {
-							thinkingBudget: GEMINI_THINKING ? GEMINI_THINKING_BUDGET : 0,
+							thinkingBudget: GEMINI_THINKING&&(GEMINI_THINKING_LEVEL!=='low') ? GEMINI_THINKING_BUDGET : 0,
+							thinkingLevel: GEMINI_THINKING_LEVEL || 'high',
 							includeThoughts: GEMINI_INCLUDE_THINKING
 						},
 						mediaResolution: 'MEDIA_RESOLUTION_MEDIUM'
@@ -795,7 +802,8 @@
 							topP: 0.9,
 							topK: 128,
 							thinkingConfig: {
-								thinkingBudget: GEMINI_THINKING ? GEMINI_THINKING_BUDGET : 0,
+								thinkingBudget: GEMINI_THINKING&&(GEMINI_THINKING_LEVEL!=='low') ? GEMINI_THINKING_BUDGET : 0,
+								thinkingLevel: GEMINI_THINKING_LEVEL || 'high',
 								includeThoughts: GEMINI_INCLUDE_THINKING
 							},
 							mediaResolution: 'MEDIA_RESOLUTION_MEDIUM'
@@ -992,7 +1000,7 @@
 							)}
 					/>
 					<span class="vertical-line"></span>
-					<input
+					{GEMINI_MODEL!=="gemini-3-pro-preview" <input
 						type="number"
 						placeholder="Thinking Budget"
 						bind:value={GEMINI_THINKING_BUDGET}
@@ -1001,7 +1009,16 @@
 						min="128"
 						max="32768"
 						step="1"
-					/>
+					/> : <select
+						bind:value={GEMINI_THINKING_LEVEL}
+						onchange={() =>
+							localStorage.setItem('GEMINI_THINKING_LEVEL', GEMINI_THINKING_LEVEL)}
+					>
+							{#each ['low', 'medium', 'high'] as level}
+								<option value={level}>{level}</option>
+							{/each}
+					</select>
+
 					<span class="vertical-line"></span>
 					<label for="do-streaming-checkbox">do streaming</label>
 					<input
@@ -1026,6 +1043,19 @@
 						min="0"
 						max="1"
 						step="0.01"
+					/>
+					<br />
+					// IMAGE_RECENT_LIMIT
+					<span>IMAGE_RECENT_LIMIT: {IMAGE_RECENT_LIMIT}</span>
+					<input
+						type="number"
+						placeholder="IMAGE_RECENT_LIMIT"
+						bind:value={IMAGE_RECENT_LIMIT}
+						oninput={() =>
+							localStorage.setItem('IMAGE_RECENT_LIMIT', IMAGE_RECENT_LIMIT.toString())}
+						min="0"
+						max="30"
+						step="1"
 					/>
 					<br />
 					<span>GEMINI_API_KEY</span>
