@@ -437,6 +437,58 @@
 	};
 
 	const receive = async (context: any, streamingMessage: any, depth: number = 0) => {
+		let body = {
+			contents: context,
+			system_instruction: {
+				parts: [{ text: GEMINI_SYSTEM_PROMPT }]
+			},
+			tools: tools,
+			generation_config: {
+				maxOutputTokens: 8192,
+				temperature: GEMINI_TEMPERATURE,
+				topP: 0.9,
+				topK: 128,
+				thinkingConfig: {
+					includeThoughts: GEMINI_INCLUDE_THINKING
+				},
+				mediaResolution: 'MEDIA_RESOLUTION_MEDIUM'
+			},
+			safetySettings: [
+				{
+					category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+					threshold: HarmBlockThreshold.BLOCK_NONE
+				},
+				{
+					category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+					threshold: HarmBlockThreshold.BLOCK_NONE
+				},
+				{
+					category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+					threshold: HarmBlockThreshold.BLOCK_NONE
+				},
+				{
+					category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+					threshold: HarmBlockThreshold.BLOCK_NONE
+				},
+				{
+					category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
+					threshold: HarmBlockThreshold.BLOCK_NONE
+				}
+			]
+		};
+
+		// if gemini 3.0 series, set thinkingLevel. else thinkingBudget
+		if (GEMINI_MODEL.startsWith('gemini-3')) {
+			body.generation_config.thinkingConfig = {
+				thinkingLevel: GEMINI_THINKING ? GEMINI_THINKING_LEVEL || 'high' : 'off',
+				includeThoughts: GEMINI_INCLUDE_THINKING
+			};
+		} else {
+			body.generation_config.thinkingConfig = {
+				thinkingBudget: GEMINI_THINKING ? GEMINI_THINKING_BUDGET : 0,
+				includeThoughts: GEMINI_INCLUDE_THINKING
+			};
+		}
 		let response = await fetch(
 			`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
 			{
@@ -448,48 +500,7 @@
 					'Keep-Alive': 'timeout=10, max=200'
 				},
 				referrer: document.location.href,
-				body: JSON.stringify({
-					contents: context,
-					system_instruction: {
-						parts: [{ text: GEMINI_SYSTEM_PROMPT }]
-					},
-					tools: tools,
-					generation_config: {
-						maxOutputTokens: 8192,
-						temperature: GEMINI_TEMPERATURE,
-						topP: 0.9,
-						topK: 128,
-						thinkingConfig: {
-							thinkingBudget:
-								GEMINI_THINKING && GEMINI_THINKING_LEVEL !== 'low' ? GEMINI_THINKING_BUDGET : 0,
-							thinkingLevel: GEMINI_THINKING_LEVEL || 'high',
-							includeThoughts: GEMINI_INCLUDE_THINKING
-						},
-						mediaResolution: 'MEDIA_RESOLUTION_MEDIUM'
-					},
-					safetySettings: [
-						{
-							category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-							threshold: HarmBlockThreshold.BLOCK_NONE
-						},
-						{
-							category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-							threshold: HarmBlockThreshold.BLOCK_NONE
-						},
-						{
-							category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-							threshold: HarmBlockThreshold.BLOCK_NONE
-						},
-						{
-							category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-							threshold: HarmBlockThreshold.BLOCK_NONE
-						},
-						{
-							category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
-							threshold: HarmBlockThreshold.BLOCK_NONE
-						}
-					]
-				}),
+				body: JSON.stringify(body),
 				method: 'POST',
 				mode: 'cors'
 			}
@@ -780,6 +791,59 @@
 
 	const receiveStream = async (context: any, streamingMessage: any) => {
 		[];
+		let body = {
+			contents: context,
+			system_instruction: {
+				parts: [{ text: GEMINI_SYSTEM_PROMPT }]
+			},
+			tools: tools,
+			generation_config: {
+				maxOutputTokens: 8192,
+				temperature: GEMINI_TEMPERATURE,
+				topP: 0.9,
+				topK: 128,
+				thinkingConfig: {
+					includeThoughts: GEMINI_INCLUDE_THINKING
+				},
+				mediaResolution: 'MEDIA_RESOLUTION_MEDIUM'
+			},
+			safetySettings: [
+				{
+					category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+					threshold: HarmBlockThreshold.BLOCK_NONE
+				},
+				{
+					category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+					threshold: HarmBlockThreshold.BLOCK_NONE
+				},
+				{
+					category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+					threshold: HarmBlockThreshold.BLOCK_NONE
+				},
+				{
+					category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+					threshold: HarmBlockThreshold.BLOCK_NONE
+				},
+				{
+					category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
+					threshold: HarmBlockThreshold.BLOCK_NONE
+				}
+			]
+		};
+
+		// if gemini 3.0 series, set thinkingLevel. else thinkingBudget
+		if (GEMINI_MODEL.startsWith('gemini-3')) {
+			body.generation_config.thinkingConfig = {
+				thinkingLevel: GEMINI_THINKING ? GEMINI_THINKING_LEVEL || 'high' : 'off',
+				includeThoughts: GEMINI_INCLUDE_THINKING
+			};
+		} else {
+			body.generation_config.thinkingConfig = {
+				thinkingBudget: GEMINI_THINKING ? GEMINI_THINKING_BUDGET : 0,
+				includeThoughts: GEMINI_INCLUDE_THINKING
+			};
+		}
+
 		try {
 			let response = await fetch(
 				`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:streamGenerateContent?key=${GEMINI_API_KEY}&alt=sse`,
@@ -791,48 +855,7 @@
 						'Content-Type': 'application/json'
 					},
 					referrer: document.location.href,
-					body: JSON.stringify({
-						contents: context,
-						system_instruction: {
-							parts: [{ text: GEMINI_SYSTEM_PROMPT }]
-						},
-						tools: tools,
-						generation_config: {
-							maxOutputTokens: 8192,
-							temperature: GEMINI_TEMPERATURE,
-							topP: 0.9,
-							topK: 128,
-							thinkingConfig: {
-								thinkingBudget:
-									GEMINI_THINKING && GEMINI_THINKING_LEVEL !== 'low' ? GEMINI_THINKING_BUDGET : 0,
-								thinkingLevel: GEMINI_THINKING_LEVEL || 'high',
-								includeThoughts: GEMINI_INCLUDE_THINKING
-							},
-							mediaResolution: 'MEDIA_RESOLUTION_MEDIUM'
-						},
-						safetySettings: [
-							{
-								category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-								threshold: HarmBlockThreshold.BLOCK_NONE
-							},
-							{
-								category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-								threshold: HarmBlockThreshold.BLOCK_NONE
-							},
-							{
-								category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-								threshold: HarmBlockThreshold.BLOCK_NONE
-							},
-							{
-								category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-								threshold: HarmBlockThreshold.BLOCK_NONE
-							},
-							{
-								category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
-								threshold: HarmBlockThreshold.BLOCK_NONE
-							}
-						]
-					}),
+					body: JSON.stringify(body),
 					method: 'POST',
 					mode: 'cors'
 				}
