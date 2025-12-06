@@ -44,6 +44,8 @@
 	let GEMINI_THINKING_LEVEL: 'low' | 'medium' | 'high';
 	let GEMINI_SYSTEM_PROMPT: string;
 	let GEMINI_DO_STREAMING: boolean; // Toggle for streaming mode
+
+	let CUSTOM_TOOL_TOGGLE: boolean = true; // Toggle for tool usage
 	let IMAGE_RECENT_LIMIT = 5; // Max number of recent images to keep in history
 
 	let currentTheme: 'light' | 'dark' = 'light';
@@ -65,6 +67,7 @@
 		// nai_api_key = localStorage.getItem('nai_api_key') || '';
 		nai_api_key.set(localStorage.getItem('nai_api_key') || '');
 
+		CUSTOM_TOOL_TOGGLE = localStorage.getItem('CUSTOM_TOOL_TOGGLE') === 'true';
 		IMAGE_RECENT_LIMIT = parseInt(localStorage.getItem('IMAGE_RECENT_LIMIT') || '5', 10);
 
 		applyTheme(currentTheme);
@@ -442,7 +445,19 @@
 			system_instruction: {
 				parts: [{ text: GEMINI_SYSTEM_PROMPT }]
 			},
-			tools: tools,
+			tools: CUSTOM_TOOL_TOGGLE
+				? tools
+				: [
+						{
+							urlContext: {}
+						},
+						{
+							codeExecution: {}
+						},
+						{
+							googleSearch: {}
+						}
+					],
 			generation_config: {
 				maxOutputTokens: 8192,
 				temperature: GEMINI_TEMPERATURE,
@@ -796,7 +811,19 @@
 			system_instruction: {
 				parts: [{ text: GEMINI_SYSTEM_PROMPT }]
 			},
-			tools: tools,
+			tools: CUSTOM_TOOL_TOGGLE
+				? tools
+				: [
+						{
+							urlContext: {}
+						},
+						{
+							codeExecution: {}
+						},
+						{
+							googleSearch: {}
+						}
+					],
 			generation_config: {
 				maxOutputTokens: 8192,
 				temperature: GEMINI_TEMPERATURE,
@@ -1073,7 +1100,6 @@
 						step="0.01"
 					/>
 					<br />
-					// IMAGE_RECENT_LIMIT
 					<span>IMAGE_RECENT_LIMIT: {IMAGE_RECENT_LIMIT}</span>
 					<input
 						type="number"
@@ -1085,6 +1111,19 @@
 						max="30"
 						step="1"
 					/>
+					<br />
+					<label for="use-custom-tool-checkbox">Use Custom Tools</label>
+					<input
+						type="checkbox"
+						id="use-custom-tool-checkbox"
+						bind:checked={CUSTOM_TOOL_TOGGLE}
+						onclick={(event) =>
+							localStorage.setItem(
+								'CUSTOM_TOOL_TOGGLE',
+								(event.target as HTMLInputElement).checked.toString()
+							)}
+					/>
+					<span class="vertical-line"></span>
 					<br />
 					<span>GEMINI_API_KEY</span>
 					<input
