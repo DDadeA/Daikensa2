@@ -41,7 +41,7 @@
 	let GEMINI_THINKING: boolean;
 	let GEMINI_INCLUDE_THINKING: boolean;
 	let GEMINI_THINKING_BUDGET: number;
-	let GEMINI_THINKING_LEVEL: "low" | "medium" | "high";
+	let GEMINI_THINKING_LEVEL: 'low' | 'medium' | 'high';
 	let GEMINI_SYSTEM_PROMPT: string;
 	let GEMINI_DO_STREAMING: boolean; // Toggle for streaming mode
 	let IMAGE_RECENT_LIMIT = 5; // Max number of recent images to keep in history
@@ -460,7 +460,8 @@
 						topP: 0.9,
 						topK: 128,
 						thinkingConfig: {
-							thinkingBudget: GEMINI_THINKING&&(GEMINI_THINKING_LEVEL!=='low') ? GEMINI_THINKING_BUDGET : 0,
+							thinkingBudget:
+								GEMINI_THINKING && GEMINI_THINKING_LEVEL !== 'low' ? GEMINI_THINKING_BUDGET : 0,
 							thinkingLevel: GEMINI_THINKING_LEVEL || 'high',
 							includeThoughts: GEMINI_INCLUDE_THINKING
 						},
@@ -802,7 +803,8 @@
 							topP: 0.9,
 							topK: 128,
 							thinkingConfig: {
-								thinkingBudget: GEMINI_THINKING&&(GEMINI_THINKING_LEVEL!=='low') ? GEMINI_THINKING_BUDGET : 0,
+								thinkingBudget:
+									GEMINI_THINKING && GEMINI_THINKING_LEVEL !== 'low' ? GEMINI_THINKING_BUDGET : 0,
 								thinkingLevel: GEMINI_THINKING_LEVEL || 'high',
 								includeThoughts: GEMINI_INCLUDE_THINKING
 							},
@@ -1000,24 +1002,27 @@
 							)}
 					/>
 					<span class="vertical-line"></span>
-					{GEMINI_MODEL!=="gemini-3-pro-preview" <input
-						type="number"
-						placeholder="Thinking Budget"
-						bind:value={GEMINI_THINKING_BUDGET}
-						oninput={() =>
-							localStorage.setItem('GEMINI_THINKING_BUDGET', GEMINI_THINKING_BUDGET.toString())}
-						min="128"
-						max="32768"
-						step="1"
-					/> : <select
-						bind:value={GEMINI_THINKING_LEVEL}
-						onchange={() =>
-							localStorage.setItem('GEMINI_THINKING_LEVEL', GEMINI_THINKING_LEVEL)}
-					>
+					{#if GEMINI_MODEL !== 'gemini-3-pro-preview'}
+						<input
+							type="number"
+							placeholder="Thinking Budget"
+							bind:value={GEMINI_THINKING_BUDGET}
+							oninput={() =>
+								localStorage.setItem('GEMINI_THINKING_BUDGET', GEMINI_THINKING_BUDGET.toString())}
+							min="128"
+							max="32768"
+							step="1"
+						/>
+					{:else}
+						<select
+							bind:value={GEMINI_THINKING_LEVEL}
+							onchange={() => localStorage.setItem('GEMINI_THINKING_LEVEL', GEMINI_THINKING_LEVEL)}
+						>
 							{#each ['low', 'medium', 'high'] as level}
 								<option value={level}>{level}</option>
 							{/each}
-					</select>
+						</select>
+					{/if}
 
 					<span class="vertical-line"></span>
 					<label for="do-streaming-checkbox">do streaming</label>
