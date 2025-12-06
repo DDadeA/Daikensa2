@@ -187,6 +187,12 @@ export const tools: Tool[] = [
 				}
 			}
 		] as FunctionDeclaration[]
+	},
+	{
+		urlContext: {}
+	},
+	{
+		googleSearch: {}
 	}
 ];
 
