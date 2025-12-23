@@ -1023,7 +1023,7 @@
 						bind:value={GEMINI_MODEL}
 						onchange={() => localStorage.setItem('GEMINI_MODEL', GEMINI_MODEL)}
 					>
-						{#each ['gemini-3-pro-preview', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'] as model}
+						{#each ['gemini-3-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'] as model}
 							<option value={model}>{model}</option>
 						{/each}
 					</select>
