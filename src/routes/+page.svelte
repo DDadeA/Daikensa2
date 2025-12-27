@@ -307,18 +307,15 @@
 			if (AUTO_TIMESTAMP) {
 				// KST
 				const now = new Date();
-				const utc = now.getTime() + now.getTimezoneOffset() * 60 * 1000;
-				const koreaTimeDiff = 9 * 60 * 60 * 1000;
-				const timestamp = new Date(utc + koreaTimeDiff)
-					.toLocaleString('ko-KR', {
-						timeZone: 'Asia/Seoul'
-					})
-					.replaceAll('. ', '.')
-					.replace('오전', 'AM')
-					.replace('오후', 'PM');
+				const kst = new Date(now.getTime() + now.getTimezoneOffset() * 60000 + 9 * 3600000);
+
+				const timestamp = `${kst.getFullYear().toString().slice(2)}년 ${kst.getMonth() + 1}월 ${kst.getDate()}일 ${kst.getHours()}시 ${kst.getMinutes()}분 ${kst.getSeconds()}초`;
+
+				console.log(timestamp);
+				// 결과: 25년 12월 27일 22시 24분 30초
 
 				// Get current timestamp in KST
-				inputMessage = `${timestamp}\n${inputMessage}`; // Prepend timestamp to the message
+				inputMessage = `${timestamp}\n\n${inputMessage}`; // Prepend timestamp to the message
 			}
 
 			// Plan
