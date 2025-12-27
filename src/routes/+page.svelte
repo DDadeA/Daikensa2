@@ -55,7 +55,7 @@
 		SHOW_IMAGE_OUTSIDE = !SHOW_IMAGE_OUTSIDE;
 		localStorage.setItem('SHOW_IMAGE_OUTSIDE', SHOW_IMAGE_OUTSIDE ? 'true' : 'false');
 
-		if(SHOW_IMAGE_OUTSIDE) {
+		if (SHOW_IMAGE_OUTSIDE) {
 			// Add style
 			const style = document.createElement('style');
 			style.id = 'show-image-outside-style';
@@ -80,6 +80,7 @@
 			if (style) {
 				style.remove();
 			}
+		}
 	};
 
 	const initializeFromLocalStorage = () => {
