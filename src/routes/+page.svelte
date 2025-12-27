@@ -64,14 +64,15 @@
 			style.innerHTML = `
 				#app {
 					max-width: 50% !important;
-					margin-right: 0;
+					margin-right: 10px !important;
+					margin-left: auto !important;
 				}
 			.message-container > .message:last-child img {
-				position: fixed;	
-				max-height: 90%;
+				position: fixed !important;	
+				max-height: 90% !important;
 
-				max-width: 45%;
-				left: 10px;
+				max-width: 45% !important;
+				left: 10px !important;
 				}
 			`;
 			document.head.appendChild(style);
