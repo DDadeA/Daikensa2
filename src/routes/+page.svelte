@@ -74,7 +74,7 @@
 				left: 10px;
 				}
 			`;
-			document.head.appendChild(style);sssssssssssssss
+			document.head.appendChild(style);
 		} else {
 			// Remove style
 			const style = document.getElementById('show-image-outside-style');
