@@ -71,10 +71,9 @@
 				position: fixed !important;	
 				max-height: 90% !important;
 
-				max-width: 50% !important;
+				max-width: 45% !important;
 				left: 10px !important;
 				top: 50% !important;
-				
 				transform: translateY(-50%) !important;
 				}
 			`;
