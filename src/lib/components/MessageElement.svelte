@@ -228,7 +228,7 @@
 			opacity 0.1s linear;
 	}
 
-	.message:hover > .button-container {
+	.message > .button-container {
 		visibility: visible;
 		opacity: 1;
 	}
