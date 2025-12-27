@@ -49,6 +49,38 @@
 	let IMAGE_RECENT_LIMIT = 5; // Max number of recent images to keep in history
 
 	let currentTheme: 'light' | 'dark' = 'light';
+	let SHOW_IMAGE_OUTSIDE: boolean = false;
+
+	const toggleShowImageOutside = () => {
+		SHOW_IMAGE_OUTSIDE = !SHOW_IMAGE_OUTSIDE;
+		localStorage.setItem('SHOW_IMAGE_OUTSIDE', SHOW_IMAGE_OUTSIDE ? 'true' : 'false');
+
+		if(SHOW_IMAGE_OUTSIDE) {
+			// Add style
+			const style = document.createElement('style');
+			style.id = 'show-image-outside-style';
+
+			// Grab last .message from .message-container
+			style.innerHTML = `
+				#app {
+					max-width: 50% !important;
+					margin-right: 0;
+				}
+			.message-container > .message:last-child img {
+				position: fixed;	
+				max-height: 90%;
+
+				max-width: 45%;
+				left: 10px;
+				}
+			`;
+		} else {
+			// Remove style
+			const style = document.getElementById('show-image-outside-style');
+			if (style) {
+				style.remove();
+			}
+	};
 
 	const initializeFromLocalStorage = () => {
 		GEMINI_API_KEY = localStorage.getItem('GEMINI_API_KEY') || '';
@@ -69,6 +101,7 @@
 
 		CUSTOM_TOOL_TOGGLE = localStorage.getItem('CUSTOM_TOOL_TOGGLE') === 'true';
 		IMAGE_RECENT_LIMIT = parseInt(localStorage.getItem('IMAGE_RECENT_LIMIT') || '5', 10);
+		SHOW_IMAGE_OUTSIDE = localStorage.getItem('SHOW_IMAGE_OUTSIDE') === 'true';
 
 		applyTheme(currentTheme);
 	};
@@ -1009,6 +1042,12 @@
 					<span class="vertical-line"></span>
 					<label for="auto-timestamp">Auto Timestamp</label>
 					<input id="auto-timestamp" type="checkbox" bind:checked={AUTO_TIMESTAMP} />
+
+					<span class="vertical-line"></span>
+					<label for="show-Image-outside">Show Images Outside(experiment)</label>
+					<button onclick={() => toggleShowImageOutside()}>
+						{SHOW_IMAGE_OUTSIDE ? 'ON' : 'OFF'}
+					</button>
 				</div>
 			</details>
 
