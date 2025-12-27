@@ -67,12 +67,15 @@
 					margin-right: 10px !important;
 					margin-left: auto !important;
 				}
-			.message-container > .message:last-child img {
+			#message-container > .message img {
 				position: fixed !important;	
 				max-height: 90% !important;
 
-				max-width: 45% !important;
+				max-width: 50% !important;
 				left: 10px !important;
+				top: 50% !important;
+				
+				transform: translateY(-50%) !important;
 				}
 			`;
 			document.head.appendChild(style);
