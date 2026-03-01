@@ -1093,7 +1093,7 @@
 							)}
 					/>
 					<span class="vertical-line"></span>
-					{#if GEMINI_MODEL !== 'gemini-3-pro-preview'}
+					{#if !(GEMINI_MODEL.startsWith('gemini-3'))}
 						<input
 							type="number"
 							placeholder="Thinking Budget"
