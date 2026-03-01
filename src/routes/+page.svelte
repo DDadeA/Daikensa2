@@ -1093,7 +1093,7 @@
 							)}
 					/>
 					<span class="vertical-line"></span>
-					{#if GEMINI_MODEL.startsWith('gemini-3')}
+					{#if (GEMINI_MODEL||'').startsWith('gemini-3')}
 						<select
 							bind:value={GEMINI_THINKING_LEVEL}
 							onchange={() => localStorage.setItem('GEMINI_THINKING_LEVEL', GEMINI_THINKING_LEVEL)}
