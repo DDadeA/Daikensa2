@@ -1093,7 +1093,16 @@
 							)}
 					/>
 					<span class="vertical-line"></span>
-					{#if !(GEMINI_MODEL.startsWith('gemini-3'))}
+					{#if GEMINI_MODEL.startsWith('gemini-3')}
+						<select
+							bind:value={GEMINI_THINKING_LEVEL}
+							onchange={() => localStorage.setItem('GEMINI_THINKING_LEVEL', GEMINI_THINKING_LEVEL)}
+						>
+							{#each ['low', 'medium', 'high'] as level}
+								<option value={level}>{level}</option>
+							{/each}
+						</select>
+					{:else}
 						<input
 							type="number"
 							placeholder="Thinking Budget"
@@ -1104,15 +1113,7 @@
 							max="32768"
 							step="1"
 						/>
-					{:else}
-						<select
-							bind:value={GEMINI_THINKING_LEVEL}
-							onchange={() => localStorage.setItem('GEMINI_THINKING_LEVEL', GEMINI_THINKING_LEVEL)}
-						>
-							{#each ['low', 'medium', 'high'] as level}
-								<option value={level}>{level}</option>
-							{/each}
-						</select>
+
 					{/if}
 
 					<span class="vertical-line"></span>
