@@ -601,9 +601,9 @@
 		//@ts-ignore
 		for (let part of candidate.content.parts) {
 			// Remove thoughtSignature
-			if (part.thoughtSignature) {
-				delete part.thoughtSignature; // Remove thoughtSignature from the part
-			}
+			// if (part.thoughtSignature) {
+			// 	delete part.thoughtSignature; // Remove thoughtSignature from the part
+			// }
 			// If part.text is not empty, append it to the streaming message
 			streamingMessage.parts.push(part); // Append each part to the streaming message
 
@@ -751,8 +751,6 @@
 		// Streaming complete
 		isMessageStreaming = false;
 
-		// Remove thoughtSignature
-
 		// Merging text parts in streamingMessage parts
 		// -- // Filter if any text part
 		const textParts = streamingMessage.parts.filter((part) => part.text);
@@ -814,8 +812,7 @@
 				conversation_id: currentConversationID,
 				role: toolResult.role || 'user',
 				parts: [
-					toolResult.data as any, // Assuming toolResult is of type Part
-					{ text: '[Automatic Tool Response]' }
+					toolResult.data as any // Assuming toolResult is of type Part
 				]
 			};
 
