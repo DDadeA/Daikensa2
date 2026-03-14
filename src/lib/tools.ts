@@ -223,6 +223,12 @@ export const actualTool: Record<string, (params: any) => Promise<ToolResult | nu
 		// Restore original console.log
 		console.log = originalConsoleLog;
 
+		if (capturedLogs.length == 0) {
+			capturedLogs.push(
+				'[Warn] no logs are captured. Maybe you missed console.log(). If you using promise, do not forget `await` keyward.'
+			);
+		}
+
 		// Return the logs
 		return {
 			sendBack: true,

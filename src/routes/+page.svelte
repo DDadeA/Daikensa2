@@ -588,7 +588,7 @@
 			// return streamingMessage; // Return the empty streaming message
 
 			// Retry
-			if (depth < 3) {
+			if (depth < 2) {
 				console.warn(`Retrying receive() due to missing content parts (attempt ${depth + 1})`);
 				streamingText.set(`Receive attempt ${depth + 1}`); // Reset streaming text
 				return await receive(context, streamingMessage, depth + 1);
@@ -814,7 +814,8 @@
 				conversation_id: currentConversationID,
 				role: toolResult.role || 'user',
 				parts: [
-					toolResult.data as any // Assuming toolResult is of type Part
+					toolResult.data as any, // Assuming toolResult is of type Part
+					{ text: '[Automatic Tool Response]' }
 				]
 			};
 
@@ -1093,7 +1094,7 @@
 							)}
 					/>
 					<span class="vertical-line"></span>
-					{#if (GEMINI_MODEL||'').startsWith('gemini-3')}
+					{#if (GEMINI_MODEL || '').startsWith('gemini-3')}
 						<select
 							bind:value={GEMINI_THINKING_LEVEL}
 							onchange={() => localStorage.setItem('GEMINI_THINKING_LEVEL', GEMINI_THINKING_LEVEL)}
@@ -1113,7 +1114,6 @@
 							max="32768"
 							step="1"
 						/>
-
 					{/if}
 
 					<span class="vertical-line"></span>
