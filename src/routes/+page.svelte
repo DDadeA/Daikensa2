@@ -758,10 +758,16 @@
 		if (textParts.length > 0) {
 			const MergedText = textParts.map((part) => part.text?.replaceAll('\\n', '\n')).join('');
 
+			const thoughtSignatures = textParts.filter((part) => part.thoughtSignature);
+
 			// Find the first text part and update its text
 			const firstTextPart = streamingMessage.parts.find((part) => part.text);
 			if (firstTextPart) {
 				firstTextPart.text = MergedText; // Update the text of the first text part
+
+				if (thoughtSignatures.length > 0) {
+					firstTextPart.thoughtSignature = thoughtSignatures[0].thoughtSignature;
+				}
 			} else {
 				console.warn('No text part found to update with merged text');
 			}
@@ -982,9 +988,9 @@
 					//@ts-ignore
 					for (let part of candidate.content.parts) {
 						// Remove thoughtSignature
-						if (part.thoughtSignature) {
-							delete part.thoughtSignature; // Remove thoughtSignature from the part
-						}
+						// if (part.thoughtSignature) {
+						// 	delete part.thoughtSignature; // Remove thoughtSignature from the part
+						// }
 						// If part.text is not empty, append it to the streaming message
 						streamingMessage.parts.push(part); // Append each part to the streaming message
 
