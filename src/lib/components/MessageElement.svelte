@@ -95,6 +95,21 @@
 				}
 			}}
 		></div>
+		{#each message.parts || [] as part}
+			{#if part.functionCall}
+				<div
+					role="button"
+					class="redo-button"
+					onclick={() => {
+						let wait = editMessage();
+						// Re do the tool call
+						//@ts-ignore
+						part.functionCall.args.seed = Math.floor(Math.random() * 1000000).toString();
+						reExecuteTool(part, wait);
+					}}
+				></div>
+			{/if}
+		{/each}
 	</div>
 	{#if message.role === 'user'}
 		<span class="message-content">
@@ -146,23 +161,9 @@
 							/> -->
 						{/if}
 					{:else}
-						<details>{JSON.stringify(part)}</details>
-						{#if part.functionCall && part.functionCall.args && part.functionCall.name == 'imageGeneration'}
-							<!-- Re do button -->
-							<div
-								role="button"
-								class="redo-button"
-								onclick={() => {
-									let wait = editMessage();
-									// Re do the tool call
-									//@ts-ignore
-									part.functionCall.args.seed = Math.floor(Math.random() * 1000000).toString();
-									reExecuteTool(message.parts, wait);
-								}}
-							>
-								@
-							</div>
-						{/if}
+						<span>
+							<details>{JSON.stringify(part)}</details>
+						</span>
 					{/if}
 				{/each}
 			{/if}
