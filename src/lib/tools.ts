@@ -90,12 +90,12 @@ WHERE conversation_id = (SELECT id FROM conversations WHERE title = '3-main');
 \`\`\`
 `;
 
-// Remove thoughtSignature in {parts: [{text: '...', thoughtSignature: '...'}], ...}.
+// Remove thoughtSignature in {parts?: [{text: '...', thoughtSignature: '...'}], ...}.
 const thoughtCleanup = (rows: any[]) => {
 	return rows.map((row) => {
 		return {
 			...row,
-			parts: row.parts.map((part: any) => {
+			parts: row.parts?.map((part: any) => {
 				const { thoughtSignature, ...rest } = part;
 				return rest;
 			})
