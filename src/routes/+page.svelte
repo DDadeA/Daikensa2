@@ -172,6 +172,16 @@
 		}
 
 		// Call the actual tool function
+
+		if (part.functionCall.name == 'imageGeneration') {
+			part.functionCall.args = {
+				...part.functionCall.args,
+				positivePrompt: part.functionCall.args.positivePrompt || NAI_POSITIVE_PROMPT,
+				negativePrompt: part.functionCall.args.negativePrompt || NAI_NEGATIVE_PROMPT
+				// You can also add other default parameters here if needed
+			};
+		}
+
 		//@ts-ignore
 		const toolResult = await actualTool[functionName](part.functionCall.args);
 		console.log('Function call result:', toolResult);

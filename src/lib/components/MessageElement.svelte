@@ -104,7 +104,7 @@
 						let wait = editMessage();
 						// Re do the tool call
 						//@ts-ignore
-						part.functionCall.args.seed = Math.floor(Math.random() * 1000000).toString();
+						part.functionCall.args.seed = Math.floor(Math.random() * 1000000);
 						reExecuteTool(part, wait);
 					}}
 				></div>
