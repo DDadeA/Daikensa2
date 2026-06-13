@@ -90,6 +90,19 @@ WHERE conversation_id = (SELECT id FROM conversations WHERE title = '3-main');
 \`\`\`
 `;
 
+// Remove thoughtSignature in {parts: [{text: '...', thoughtSignature: '...'}]} for better readability
+const thoughtCleanup = (rows: any[]) => {
+	return rows.map((row) => {
+		const cleanedRow = { ...row };
+		if (cleanedRow.parts) {
+			cleanedRow.parts = cleanedRow.parts.map((part: any) => {
+				const { thoughtSignature, ...rest } = part;
+				return rest;
+			});
+		}
+	});
+};
+
 export const tools: Tool[] = [
 	{
 		functionDeclarations: [
@@ -263,7 +276,7 @@ export const actualTool: Record<string, (params: any) => Promise<ToolResult | nu
 		return {
 			sendBack: true,
 			role: 'user',
-			data: makeFunctionResponse('query', res)
+			data: makeFunctionResponse('query', thoughtCleanup(res.result.rows))
 		};
 	},
 	imageGeneration: async (
