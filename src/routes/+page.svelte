@@ -176,8 +176,8 @@
 		if (part.functionCall.name == 'imageGeneration') {
 			part.functionCall.args = {
 				...part.functionCall.args,
-				positivePrompt: part.functionCall.args.positivePrompt || NAI_POSITIVE_PROMPT,
-				negativePrompt: part.functionCall.args.negativePrompt || NAI_NEGATIVE_PROMPT
+				positivePrompt: NAI_POSITIVE_PROMPT + part.functionCall.args.positivePrompt,
+				negativePrompt: NAI_NEGATIVE_PROMPT + part.functionCall.args.negativePrompt
 				// You can also add other default parameters here if needed
 			};
 		}
