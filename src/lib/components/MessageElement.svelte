@@ -6,6 +6,7 @@
 	export let message: Message;
 	export let deleteMessage = () => {};
 	export let editMessage = async () => {};
+	export let reExecuteTool = async (parts: any, wait: Promise<any>) => {};
 	export let isStreaming = false;
 
 	let isEditing = false;
@@ -92,6 +93,20 @@
 						console.error('Failed to parse JSON:', error);
 					}
 				}
+			}}
+		></div>
+		<div
+			role="button"
+			class="redo-button"
+			onclick={() => {
+				let wait = new Promise((resolve) => resolve());
+				if (message.parts && message.parts['functionCall']['name'] == 'imageGeneration') {
+					message.parts.functionCall.args.seed = Math.floor(Math.random() * 1000000).toString();
+					wait = editMessage();
+				}
+
+				// Re do the tool call
+				reExecuteTool(message.parts, wait);
 			}}
 		></div>
 	</div>

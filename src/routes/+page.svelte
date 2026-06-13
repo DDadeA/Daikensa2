@@ -15,6 +15,12 @@
 	import { apiFetch } from '$lib/api';
 	import { isAskingChoice, choiceOptions, handleChoice } from '$lib/tools';
 
+	const defaultSystemPrompt = 'You are a helpful assistant.';
+	const defaultNAIPositivePrompt =
+		'{{{masterpiece}}}, {{{best quality}}}, {{amazing quality}}, {{{4k}}}, {{{High definition}}}, {{aesthetic}}, {{spectacular shadow}}, ,{{{shiny skin}}}, {{{{{{{beautiful light}}}}}}}, {{{{Vivid and realistic eyes, sharp and detailed irises, natural iris patterns, delicate and defined eyelashes, reflective highlights in the eyes, smooth and realistic eyelids, emotionally expressive gaze, eye highlights, finely detailed beautiful eyes}}}},0.9::artist:kat (bu-kunn)::,0.9::artist: sumiyao (amam)::, 0.8::aritst:tianliang duohe fangdongye::,0.5::artist:pelican (s030)::, 0.5::artist:null (nyanpyoun)::, 0.9::artist:mignon::, 1.2::aritst:ie_(raarami)}::, 1.4::artist:fanteam::, year 2024, year 2025,';
+	const defaultNAINegativePrompt =
+		'{{normal quality, bad quality, low quality, worst quality, lowres, displeasing, bad anatomy, bad perspective, bad proportions, bad face, bad arm, bad hands, bad leg, bad feet, bad reflection, bad link, bad source, wrong hand, wrong feet, missing, missing limb, missing eye, missing tooth, missing ear, missing finger, extra, extra faces, extra eyes, extra mouth, extra ears, extra breasts, extra arms, extra hands, extra legs, extra digits, fewer digits, cropped, cropped head, cropped torso, cropped arms, cropped legs, JPEG artifacts, signature, watermark, username, blurry, artist name, fat, duplicate, mutation, deformed, disfigured, long neck, unfinished, chromatic aberration, scan, scan artifacts, abstract, @_@, brown skin, glasses, vertical lines, vertical banding}},';
+
 	let loadingConversations: boolean = false;
 	let loadingMessages: boolean = false;
 	let isMessageStreaming = false; // Placeholder for streaming state
@@ -44,6 +50,9 @@
 	let GEMINI_THINKING_LEVEL: 'low' | 'medium' | 'high';
 	let GEMINI_SYSTEM_PROMPT: string;
 	let GEMINI_DO_STREAMING: boolean; // Toggle for streaming mode
+
+	let NAI_POSITIVE_PROMPT: string = '';
+	let NAI_NEGATIVE_PROMPT: string = '';
 
 	let CUSTOM_TOOL_TOGGLE: boolean = true; // Toggle for tool usage
 	let IMAGE_RECENT_LIMIT = 5; // Max number of recent images to keep in history
@@ -128,6 +137,80 @@
 			const v = c === 'x' ? r : (r & 0x3) | 0x8;
 			return v.toString(16);
 		});
+	};
+
+	const updateConversationData = () => {
+		apiFetch(`/api/conversation/`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify({
+				id: currentConversationID,
+				title: conversationList.find((convo) => convo.id === currentConversationID)?.title,
+				settings: {
+					systemPrompt: GEMINI_SYSTEM_PROMPT,
+					naiPositivePrompt: NAI_POSITIVE_PROMPT,
+					naiNegativePrompt: NAI_NEGATIVE_PROMPT
+				}
+			})
+		})
+			.then(() => {
+				// Successfully updated system prompt
+			})
+			.catch((error) => {
+				console.error('Error updating system prompt:', error);
+			});
+	};
+
+	const handleToolUse = async (part: any, postOriginalPromise: Promise<void>) => {
+		// @ts-ignore
+		const functionName = part.functionCall.name as keyof typeof actualTool;
+		if (!actualTool[functionName]) {
+			console.error(`Function ${functionName} is not defined in actualTool`);
+			return; // Skip if the function is not defined
+		}
+
+		// Call the actual tool function
+		//@ts-ignore
+		const toolResult = await actualTool[functionName](part.functionCall.args);
+		console.log('Function call result:', toolResult);
+
+		if (toolResult == null) {
+			console.warn(`Function ${functionName} intentionally returned null. Skipping response.`);
+			return; // Skip sending a response if the function returned null
+		}
+
+		//  handle the result here, send it back to the LLM
+
+		// Append the result to the streaming message content
+		const resultMessage: Message = {
+			id: randomUUID(),
+			conversation_id: currentConversationID,
+			role: toolResult.role || 'user',
+			parts: [
+				toolResult.data as any // Assuming toolResult is of type Part
+			]
+		};
+
+		messageList = [...messageList, { ...resultMessage }];
+
+		// POST the result message to the API
+		await postOriginalPromise; // Ensure the original message is posted first
+
+		apiFetch(`/api/message`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify(resultMessage)
+		});
+
+		scrollToBottom();
+
+		if (toolResult.sendBack) {
+			handleAPI(); // Call the API handler to process the result message
+		}
 	};
 
 	onMount(() => {
@@ -297,7 +380,14 @@
 
 		GEMINI_SYSTEM_PROMPT =
 			(conversationList.find((conv) => conv.id === conversationID)?.settings || {}).systemPrompt ||
-			'You are a helpful assistant.';
+			defaultSystemPrompt;
+
+		NAI_POSITIVE_PROMPT =
+			(conversationList.find((conv) => conv.id === conversationID)?.settings || {})
+				.naiPositivePrompt || defaultNAIPositivePrompt;
+		NAI_NEGATIVE_PROMPT =
+			(conversationList.find((conv) => conv.id === conversationID)?.settings || {})
+				.naiNegativePrompt || defaultNAINegativePrompt;
 
 		// Fetching messages for a specific conversation
 		apiFetch(`/api/message?conversation_id=${conversationID}`, {
@@ -793,53 +883,7 @@
 			}
 
 			// Handle the function call here, e.g., execute the function or log it
-			// @ts-ignore
-			const functionName = part.functionCall.name as keyof typeof actualTool;
-			if (!actualTool[functionName]) {
-				console.error(`Function ${functionName} is not defined in actualTool`);
-				continue; // Skip if the function is not defined
-			}
-
-			// Call the actual tool function
-			//@ts-ignore
-			const toolResult = await actualTool[functionName](part.functionCall.args);
-			console.log('Function call result:', toolResult);
-
-			if (toolResult == null) {
-				console.warn(`Function ${functionName} intentionally returned null. Skipping response.`);
-				continue; // Skip sending a response if the function returned null
-			}
-
-			//  handle the result here, send it back to the LLM
-
-			// Append the result to the streaming message content
-			const resultMessage: Message = {
-				id: randomUUID(),
-				conversation_id: currentConversationID,
-				role: toolResult.role || 'user',
-				parts: [
-					toolResult.data as any // Assuming toolResult is of type Part
-				]
-			};
-
-			messageList = [...messageList, { ...resultMessage }];
-
-			// POST the result message to the API
-			await postOriginalPromise; // Ensure the original message is posted first
-
-			apiFetch(`/api/message`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json'
-				},
-				body: JSON.stringify(resultMessage)
-			});
-
-			scrollToBottom();
-
-			if (toolResult.sendBack) {
-				handleAPI(); // Call the API handler to process the result message
-			}
+			await handleToolUse(part, postOriginalPromise); // Call the function to handle tool usage
 		}
 	};
 
@@ -1192,30 +1236,22 @@
 					<textarea
 						placeholder="system prompt"
 						bind:value={GEMINI_SYSTEM_PROMPT}
-						oninput={() =>
-							// Fetch to conversation
-							apiFetch(`/api/conversation/`, {
-								method: 'POST',
-								headers: {
-									'Content-Type': 'application/json'
-								},
-								body: JSON.stringify({
-									id: currentConversationID,
-									title: conversationList.find((convo) => convo.id === currentConversationID)
-										?.title,
-									settings: {
-										systemPrompt: GEMINI_SYSTEM_PROMPT
-									}
-								})
-							})
-								.then(() => {
-									// Successfully updated system prompt
-								})
-								.catch((error) => {
-									console.error('Error updating system prompt:', error);
-								})}
+						oninput={() => updateConversationData()}
 					></textarea>
 					<br />
+					<span>NAI Positive Prompt</span>
+					<textarea
+						placeholder="NAI Positive Prompt"
+						bind:value={NAI_POSITIVE_PROMPT}
+						oninput={() => updateConversationData()}
+					></textarea>
+					<br />
+					<span>NAI Negative Prompt</span>
+					<textarea
+						placeholder="NAI Negative Prompt"
+						bind:value={NAI_NEGATIVE_PROMPT}
+						oninput={() => updateConversationData()}
+					></textarea>
 				</div>
 			</details>
 		</div>
@@ -1256,6 +1292,9 @@
 								created_at: message.created_at
 							})
 						});
+					}}
+					reExecuteTool={async (parts: any, wait: Promise<any>) => {
+						await handleToolUse(parts, wait); // Call the function to handle tool usage
 					}}
 				/>
 			{/each}

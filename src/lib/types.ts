@@ -7,6 +7,8 @@ export interface Conversation {
 	updated_at: string;
 	settings?: {
 		systemPrompt?: string;
+		naiPositivePrompt?: string;
+		naiNegativePrompt?: string;
 	};
 }
 
