@@ -71,7 +71,7 @@
 		"gemma-4-31b-it",
 		"gemma-4-26b-a4b-it",
 	];
-	const isThinkingLevelModel(modelName:string) {
+	const isThinkingLevelModel = (modelName:string) => {
 		return modelName.startsWith("gemini-3") || modelName.startsWith("gemma-4");
 	}
 
