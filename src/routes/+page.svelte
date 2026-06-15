@@ -60,6 +60,21 @@
 	let currentTheme: 'light' | 'dark' = 'light';
 	let SHOW_IMAGE_OUTSIDE: boolean = false;
 
+	const modelList:string[] = [
+		'gemini-3.5-flash',
+		'gemini-3.1-pro-preview',
+		'gemini-3-pro-preview',
+		'gemini-3-flash-preview',
+		'gemini-2.5-pro',
+		'gemini-2.5-flash',
+		'gemini-2.5-flash-lite',
+		"gemma-4-31b-it",
+		"gemma-4-26b-a4b-it",
+	];
+	const isThinkingLevelModel(modelName:string) {
+		return modelName.startsWith("gemini-3") || modelName.startsWith("gemma-4");
+	}
+
 	const toggleShowImageOutside = () => {
 		SHOW_IMAGE_OUTSIDE = !SHOW_IMAGE_OUTSIDE;
 		localStorage.setItem('SHOW_IMAGE_OUTSIDE', SHOW_IMAGE_OUTSIDE ? 'true' : 'false');
@@ -98,7 +113,7 @@
 
 	const initializeFromLocalStorage = () => {
 		GEMINI_API_KEY = localStorage.getItem('GEMINI_API_KEY') || '';
-		GEMINI_MODEL = localStorage.getItem('GEMINI_MODEL') || 'gemini-2.5-pro';
+		GEMINI_MODEL = localStorage.getItem('GEMINI_MODEL') || modelList[0];
 		GEMINI_TEMPERATURE = parseFloat(localStorage.getItem('GEMINI_TEMPERATURE') || '0.95');
 		GEMINI_THINKING = localStorage.getItem('GEMINI_THINKING') === 'true';
 		GEMINI_INCLUDE_THINKING = localStorage.getItem('GEMINI_INCLUDE_THINKING') === 'true';
@@ -628,7 +643,7 @@
 		};
 
 		// if gemini 3.0 series, set thinkingLevel. else thinkingBudget
-		if (GEMINI_MODEL.startsWith('gemini-3')) {
+		if (isThinkingLevelModel(GEMINI_MODEL)) {
 			body.generation_config.thinkingConfig = {
 				thinkingLevel: GEMINI_THINKING ? GEMINI_THINKING_LEVEL || 'high' : 'off',
 				includeThoughts: GEMINI_INCLUDE_THINKING
@@ -951,8 +966,7 @@
 			]
 		};
 
-		// if gemini 3.0 series, set thinkingLevel. else thinkingBudget
-		if (GEMINI_MODEL.startsWith('gemini-3')) {
+		if (isThinkingLevelModel(GEMINI_MODEL)) {
 			body.generation_config.thinkingConfig = {
 				thinkingLevel: GEMINI_THINKING ? GEMINI_THINKING_LEVEL || 'high' : 'off',
 				includeThoughts: GEMINI_INCLUDE_THINKING
@@ -1122,7 +1136,7 @@
 						bind:value={GEMINI_MODEL}
 						onchange={() => localStorage.setItem('GEMINI_MODEL', GEMINI_MODEL)}
 					>
-						{#each ['gemini-3.5-flash', 'gemini-3.1-pro-preview', 'gemini-3-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'] as model}
+						{#each modelList as model}
 							<option value={model}>{model}</option>
 						{/each}
 					</select>
@@ -1151,7 +1165,7 @@
 							)}
 					/>
 					<span class="vertical-line"></span>
-					{#if (GEMINI_MODEL || '').startsWith('gemini-3')}
+					{#if isThinkingLevelModel(GEMINI_MODEL || '')}
 						<select
 							bind:value={GEMINI_THINKING_LEVEL}
 							onchange={() => localStorage.setItem('GEMINI_THINKING_LEVEL', GEMINI_THINKING_LEVEL)}
