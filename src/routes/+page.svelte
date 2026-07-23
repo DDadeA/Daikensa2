@@ -61,6 +61,7 @@
 	let SHOW_IMAGE_OUTSIDE: boolean = false;
 
 	const modelList: string[] = [
+		'gemini-3.6-flash',
 		'gemini-3.5-flash',
 		'gemini-3.1-pro-preview',
 		'gemini-3-pro-preview',
@@ -68,6 +69,9 @@
 		'gemini-2.5-pro',
 		'gemini-2.5-flash',
 		'gemini-2.5-flash-lite',
+		'gemini-pro-lastest',
+		'gemini-flash-lastest',
+		'gemini-flash-lite-lastest',
 		'gemma-4-31b-it',
 		'gemma-4-26b-a4b-it'
 	];
