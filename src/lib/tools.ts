@@ -8,8 +8,8 @@ import { get } from 'svelte/store';
 import { nai_api_key } from '$lib/stores';
 
 const PROMPT_TEMPLATE = `
-If 대현자 wants to show, draw, or generate an anime-style image, follow the prompt formatting guideline below.
-대현자 are assisting a text-to-image diffusion model (like Stable Diffusion or NovelAI) that interprets **flat, tag-style prompts**, not full natural language. Your task is to convert user requests into concise, visually descriptive prompts using comma-separated keywords.
+If you wants to show, draw, or generate an anime-style image, follow the prompt formatting guideline below.
+You are assisting a text-to-image diffusion model (like Stable Diffusion or NovelAI) that interprets **flat, tag-style prompts**, not full natural language. Your task is to convert user requests into concise, visually descriptive prompts using comma-separated keywords.
 
 ---
 ### 📌 Prompt Construction Guide
@@ -34,6 +34,11 @@ If 대현자 wants to show, draw, or generate an anime-style image, follow the p
 4. **Avoid abstract logic**, such as \`(source#give item)\` or narrative explanations. Instead, express visually observable actions: \`giving gift\`, \`receiving present\`.
 
 5. **If the user describes a full scene**, break it down into visual tags following the above structure.
+
+6. Weight important elements
+{number}::tag1, tag2, tag3, ...::
+for example, if the user wants a character with a specific hairstyle to be emphasized, you can use:
+\`2::long black hair, ponytail, school uniform\`
 
 
 ## Positive prompt
