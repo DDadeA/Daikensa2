@@ -60,7 +60,7 @@
 	let currentTheme: 'light' | 'dark' = 'light';
 	let SHOW_IMAGE_OUTSIDE: boolean = false;
 
-	const modelList:string[] = [
+	const modelList: string[] = [
 		'gemini-3.5-flash',
 		'gemini-3.1-pro-preview',
 		'gemini-3-pro-preview',
@@ -68,12 +68,12 @@
 		'gemini-2.5-pro',
 		'gemini-2.5-flash',
 		'gemini-2.5-flash-lite',
-		"gemma-4-31b-it",
-		"gemma-4-26b-a4b-it",
+		'gemma-4-31b-it',
+		'gemma-4-26b-a4b-it'
 	];
-	const isThinkingLevelModel = (modelName:string) => {
-		return modelName.startsWith("gemini-3") || modelName.startsWith("gemma-4");
-	}
+	const isThinkingLevelModel = (modelName: string) => {
+		return modelName.startsWith('gemini-3') || modelName.startsWith('gemma-4');
+	};
 
 	const toggleShowImageOutside = () => {
 		SHOW_IMAGE_OUTSIDE = !SHOW_IMAGE_OUTSIDE;
@@ -187,18 +187,23 @@
 		}
 
 		// Call the actual tool function
-
+		let toolResult;
 		if (part.functionCall.name == 'imageGeneration') {
 			part.functionCall.args = {
 				...part.functionCall.args,
+				positivePrompt: part.functionCall.args.positivePrompt,
+				negativePrompt: part.functionCall.args.negativePrompt
+			};
+			toolResult = await actualTool[functionName]({
+				...part.functionCall.args,
 				positivePrompt: NAI_POSITIVE_PROMPT + part.functionCall.args.positivePrompt,
 				negativePrompt: NAI_NEGATIVE_PROMPT + part.functionCall.args.negativePrompt
-				// You can also add other default parameters here if needed
-			};
+			});
+		} else {
+			toolResult = await actualTool[functionName](part.functionCall.args);
 		}
 
 		//@ts-ignore
-		const toolResult = await actualTool[functionName](part.functionCall.args);
 		console.log('Function call result:', toolResult);
 
 		if (toolResult == null) {
