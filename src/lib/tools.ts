@@ -14,13 +14,13 @@ You are assisting a text-to-image diffusion model (like Stable Diffusion or Nove
 ---
 ### 📌 Prompt Construction Guide
 
-1. **Do NOT write full sentences.**  
-   Use short, descriptive phrases or single keywords.
+1. Use natural text & tag based prompt
+ Now NovelAI V5 takes this to the next level, with an unprecedented level of understanding. Just describe the image in your mind, and watch your imagination come true. Of course, prompting with tags is still fully supported, for those who appreciate the brevity and consistency it can provide.
 
 2. **Use comma-separated tags.**  
    These represent visual elements that should co-occur in the image.
 
-3. **Include the following categories when possible** (in any order):
+3. **Include the following categories** (in any order):
    - \`Character Count & Type\`: e.g., \`1girl\`, \`2boys\`
    - \`Pose or Action\`: e.g., \`sitting on bench\`, \`holding gift\`
    - \`Facial Expression\`: e.g., \`smiling\`, \`blushing\`, \`crying\`
@@ -31,7 +31,6 @@ You are assisting a text-to-image diffusion model (like Stable Diffusion or Nove
    - \`Scene/Background\`: e.g., \`classroom\`, \`japanese bedroom\`, \`forest at night\`
    - \`Lighting/Mood\`: e.g., \`soft lighting\`, \`sunset glow\`, \`dramatic shadows\`
 
-4. **Avoid abstract logic**, such as \`(source#give item)\` or narrative explanations. Instead, express visually observable actions: \`giving gift\`, \`receiving present\`.
 
 5. **If the user describes a full scene**, break it down into visual tags following the above structure.
 
@@ -334,7 +333,7 @@ export const toolConfig = {
 	// }
 };
 
-const selectedModel = 'nai-diffusion-4-5-full';
+const selectedModel = 'nai-diffusion-5-full';
 const selectedSize = '832x1216';
 
 // Returning image as a base64 data URL
