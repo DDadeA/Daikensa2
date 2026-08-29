@@ -8,43 +8,7 @@ import { get } from 'svelte/store';
 import { nai_api_key } from '$lib/stores';
 
 const PROMPT_TEMPLATE = `
-If you wants to show, draw, or generate an anime-style image, follow the prompt formatting guideline below.
-You are assisting a text-to-image diffusion model (like Stable Diffusion or NovelAI) that interprets **flat, tag-style prompts**, not full natural language. Your task is to convert user requests into concise, visually descriptive prompts using comma-separated keywords.
-
----
-### 📌 Prompt Construction Guide
-
-1. Use natural text & tag based prompt
- Now NovelAI V5 takes this to the next level, with an unprecedented level of understanding. Just describe the image in your mind, and watch your imagination come true. Of course, prompting with tags is still fully supported, for those who appreciate the brevity and consistency it can provide.
-
-2. **Use comma-separated tags.**  
-   These represent visual elements that should co-occur in the image.
-
-3. **Include the following categories** (in any order):
-   - \`Character Count & Type\`: e.g., \`1girl\`, \`2boys\`
-   - \`Pose or Action\`: e.g., \`sitting on bench\`, \`holding gift\`
-   - \`Facial Expression\`: e.g., \`smiling\`, \`blushing\`, \`crying\`
-   - \`Hair\`: style, length, color (e.g., \`long black hair\`, \`ponytail\`)
-   - \`Eyes\`: shape and color (e.g., \`golden eyes\`, \`narrow eyes\`)
-   - \`Outfit\`: clothing type, color, accessories (e.g., \`school uniform\`, \`maid outfit\`)
-   - \`Perspective\`: e.g., \`close-up\`, \`overhead view\`, \`profile view\`
-   - \`Scene/Background\`: e.g., \`classroom\`, \`japanese bedroom\`, \`forest at night\`
-   - \`Lighting/Mood\`: e.g., \`soft lighting\`, \`sunset glow\`, \`dramatic shadows\`
-
-
-5. **If the user describes a full scene**, break it down into visual tags following the above structure.
-
-6. Weight important elements
-{number}::tag1, tag2, tag3, ...::
-for example, if the user wants a character with a specific hairstyle to be emphasized, you can use:
-\`2::long black hair, ponytail, school uniform\`
-
-
-## Positive prompt
-Skip the quality tags as they are defaultly injected afterwards. Always include the visually descriptive tags based on the user request.
-\`\`\`
-## Negative prompt (no need to modify except special cases. Always include these keywords into negative prompt)
-skip quality tags as they are defaultly injected afterwards.
+Refer ### Guide for Image tools (NovelAI Diffusion V5 Standard)
 `;
 
 const SQL_TEMPLATE = `
@@ -175,7 +139,7 @@ export const tools: Tool[] = [
 			},
 			{
 				name: 'imageGeneration',
-				description: `Generate an image based on the given prompts. Here\'s the guideline. \n${PROMPT_TEMPLATE}`,
+				description: `Generate an image based on the given prompts. \n${PROMPT_TEMPLATE}`,
 				parameters: {
 					type: Type.OBJECT,
 					properties: {
@@ -191,6 +155,11 @@ export const tools: Tool[] = [
 							type: Type.NUMBER,
 							description:
 								'The seed for random number generation to ensure reproducibility. If you change your expression or posture slightly in a row of images, keep the seed the same. In other cases, enter a random natural number that is not too long (about 12 characters)'
+						},
+						resolution: {
+							type: Type.STRING,
+							description:
+								'The resolution of the generated image. The default is 832x1216. You can change it to 1024x1024 or 832x1216. Anything smaller works.'
 						}
 					},
 					required: ['positivePrompt', 'negativePrompt', 'seed']
@@ -284,7 +253,12 @@ export const actualTool: Record<string, (params: any) => Promise<ToolResult | nu
 		};
 	},
 	imageGeneration: async (
-		params: { positivePrompt: string; negativePrompt: string; seed: number } = {
+		params: {
+			positivePrompt: string;
+			negativePrompt: string;
+			seed: number;
+			selectedSize?: string;
+		} = {
 			positivePrompt: '',
 			negativePrompt: '',
 			seed: 1
@@ -299,7 +273,8 @@ export const actualTool: Record<string, (params: any) => Promise<ToolResult | nu
 						params.positivePrompt,
 						params.negativePrompt,
 						get(nai_api_key),
-						params.seed
+						params.seed,
+						params.selectedSize || '832x1216'
 					)
 				}
 			},
@@ -334,14 +309,14 @@ export const toolConfig = {
 };
 
 const selectedModel = 'nai-diffusion-5-full';
-const selectedSize = '832x1216';
 
 // Returning image as a base64 data URL
 async function handleNAI(
 	positivePrompts: string,
 	negativePrompts: string,
 	apiKey: string,
-	seed: number
+	seed: number,
+	selectedSize: string = '832x1216'
 ) {
 	console.log('Making direct API call...');
 
