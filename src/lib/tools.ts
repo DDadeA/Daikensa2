@@ -284,8 +284,20 @@ export const actualTool: Record<string, (params: any) => Promise<ToolResult | nu
 };
 
 const functionOutputLimit = 500; 
+
+function convertToString(val:any) {
+  if (val === null || val === undefined) {
+    return '';
+  }
+  if (typeof val === 'object') {
+    return JSON.stringify(val);
+  }
+  return String(val);
+}
+
+
 const makeFunctionResponse = (functionName: string, result: any) => {
-	let output = String(result);
+	let output = convertToString(result);
 
 	// Trim
 	if (output.length > functionOutputLimit) {
