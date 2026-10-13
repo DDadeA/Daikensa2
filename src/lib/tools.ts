@@ -283,12 +283,20 @@ export const actualTool: Record<string, (params: any) => Promise<ToolResult | nu
 	}
 };
 
+const functionOutputLimit = 500; 
 const makeFunctionResponse = (functionName: string, result: any) => {
+	let output = String(result);
+
+	// Trim
+	if (output.length > functionOutputLimit) {
+		output = output.slice(0, functionOutputLimit) + `(${output.length - functionOutputLimit} characters are truncated.)`;
+	}
+	
 	return {
 		functionResponse: {
 			name: functionName,
 			response: {
-				output: result
+				"output": output
 			}
 		}
 	};
