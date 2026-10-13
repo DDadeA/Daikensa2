@@ -79,7 +79,7 @@
 		'gemma-4-26b-a4b-it'
 	];
 	const isThinkingLevelModel = (modelName: string) => {
-		return modelName.startsWith('gemini-3') || modelName.startsWith('gemma-4');
+		return modelName.startsWith('gemini-3') || modelName.startsWith('gemma-4') || modelName.startsWith('gemini-4');
 	};
 
 	const toggleShowImageOutside = () => {
