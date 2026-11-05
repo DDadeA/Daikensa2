@@ -14,7 +14,7 @@
 	import { streamingText, nai_api_key, currentConversationId, scratchpadUpdate, conversationsChanged } from '$lib/stores';
 	import { buildContext, buildSystemPrompt } from '$lib/context';
 	import { apiFetch } from '$lib/api';
-	import { isAskingChoice, choiceOptions, handleChoice } from '$lib/tools';
+	import { isAskingChoice, choiceOptions, handleChoice, isRunningJs, stopJavascript } from '$lib/tools';
 
 	const defaultSystemPrompt = 'You are a helpful assistant.';
 	const defaultNAIPositivePrompt =
@@ -25,6 +25,12 @@
 	let loadingConversations: boolean = false;
 	let loadingMessages: boolean = false;
 	let isMessageStreaming = false; // Placeholder for streaming state
+	let abortController: AbortController | null = null;
+	const USER_ABORT_MARKER = '[유저에 의해 중단됨]';
+	const isAbortError = (error: unknown) =>
+		(error instanceof DOMException || error instanceof Error) && error.name === 'AbortError';
+	const stopGeneration = () => abortController?.abort();
+	let JS_TOOL_TIMEOUT_SEC = 300;
 
 	let conversationList: Array<Conversation> = [];
 	let currentConversationID: string = '';
@@ -152,6 +158,7 @@
 
 		CUSTOM_TOOL_TOGGLE = localStorage.getItem('CUSTOM_TOOL_TOGGLE') === 'true';
 		IMAGE_RECENT_LIMIT = parseInt(localStorage.getItem('IMAGE_RECENT_LIMIT') || '5', 10);
+		JS_TOOL_TIMEOUT_SEC = parseInt(localStorage.getItem('JS_TOOL_TIMEOUT_SEC') || '300', 10) || 300;
 		SHOW_IMAGE_OUTSIDE = localStorage.getItem('SHOW_IMAGE_OUTSIDE') === 'true';
 
 		applyTheme(currentTheme);
@@ -718,6 +725,7 @@
 		let response = await fetch(
 			`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
 			{
+				signal: abortController?.signal,
 				credentials: 'omit',
 				headers: {
 					// 'Accept-Language': 'ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3',
@@ -912,13 +920,32 @@
 		streamingMessage.parts = []; // Initialize parts for the streaming message
 		$streamingText = ''; // Reset streaming text
 
-		GEMINI_DO_STREAMING
-			? await receiveStream(context, streamingMessage)
-			: await receive(context, streamingMessage);
+		abortController = new AbortController();
+		let aborted = false;
+		try {
+			GEMINI_DO_STREAMING
+				? await receiveStream(context, streamingMessage)
+				: await receive(context, streamingMessage);
+		} catch (error) {
+			if (isAbortError(error)) {
+				aborted = true;
+			} else {
+				// Network/parse failure: never leave the loading bar stuck
+				console.error('Error during LLM API call:', error);
+			}
+		} finally {
+			// Streaming complete (or failed/aborted)
+			isMessageStreaming = false;
+			abortController = null;
+		}
 
-		// Streaming complete
-		isMessageStreaming = false;
+		if (aborted) {
+			// A dangling functionCall without a response would break the next request
+			streamingMessage.parts = streamingMessage.parts.filter((part) => !part.functionCall);
+		}
 
+		// Nothing was received (error or empty abort): do not save an empty message
+		if (streamingMessage.parts.length === 0) return;
 		// Merging text parts in streamingMessage parts
 		// -- // Filter if any text part
 		const textParts = streamingMessage.parts.filter((part) => part.text);
@@ -944,6 +971,10 @@
 			streamingMessage.parts = streamingMessage.parts.filter(
 				(part) => !part.text || part === firstTextPart
 			);
+		}
+
+		if (aborted) {
+			streamingMessage.parts.push({ text: USER_ABORT_MARKER });
 		}
 		messageList = [...messageList, { ...streamingMessage }];
 
@@ -1035,6 +1066,7 @@
 			let response = await fetch(
 				`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:streamGenerateContent?key=${GEMINI_API_KEY}&alt=sse`,
 				{
+					signal: abortController?.signal,
 					credentials: 'omit',
 					headers: {
 						// Accept: '*/*',
@@ -1127,6 +1159,7 @@
 				}
 			}
 		} catch (error) {
+			if (isAbortError(error)) throw error; // handled in handleAPI (keeps partial output)
 			console.error('Error during LLM API call:', error);
 			isMessageStreaming = false; // Reset streaming state on error
 
@@ -1278,6 +1311,18 @@
 						step="1"
 					/>
 					<br />
+					<span>JS tool timeout (sec): {JS_TOOL_TIMEOUT_SEC}</span>
+					<input
+						type="number"
+						placeholder="JS_TOOL_TIMEOUT_SEC"
+						bind:value={JS_TOOL_TIMEOUT_SEC}
+						oninput={() =>
+							localStorage.setItem('JS_TOOL_TIMEOUT_SEC', String(JS_TOOL_TIMEOUT_SEC || 300))}
+						min="1"
+						max="3600"
+						step="1"
+					/>
+					<br />
 					<label for="use-custom-tool-checkbox">Use Custom Tools</label>
 					<input
 						type="checkbox"
@@ -1401,6 +1446,14 @@
 			}}>+</button
 		>
 		<textarea placeholder="메시지 입력" bind:value={inputMessage}></textarea>
+		{#if isMessageStreaming || $isRunningJs}
+			<button
+				id="stop-button"
+				onclick={() => (isMessageStreaming ? stopGeneration() : stopJavascript())}
+				aria-label="Stop generating"
+				title="중단">⏹</button
+			>
+		{/if}
 		<button id="send-button" onclick={() => handleSend()} aria-label="Send message">
 			<span
 				style="content: url('https://api.iconify.design/line-md/arrow-right-square.svg'); width: 24px; height: 24px; display: inline-block; filter: {currentTheme ===
