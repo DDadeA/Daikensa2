@@ -10,10 +10,11 @@
 		FunctionCallingConfigMode
 	} from '@google/genai';
 	import type { Part, Content } from '@google/genai';
-	import { tools, actualTool, cancelToolAwait } from '$lib/tools';
-	import { streamingText, nai_api_key } from '$lib/stores';
+	import { tools, actualTool, cancelToolAwait, installSeulgiBridge } from '$lib/tools';
+	import { streamingText, nai_api_key, currentConversationId, scratchpadUpdate, conversationsChanged } from '$lib/stores';
+	import { buildContext, buildSystemPrompt } from '$lib/context';
 	import { apiFetch } from '$lib/api';
-	import { isAskingChoice, choiceOptions, handleChoice } from '$lib/tools';
+	import { isAskingChoice, choiceOptions, handleChoice, isRunningJs, stopJavascript } from '$lib/tools';
 
 	const defaultSystemPrompt = 'You are a helpful assistant.';
 	const defaultNAIPositivePrompt =
@@ -24,6 +25,12 @@
 	let loadingConversations: boolean = false;
 	let loadingMessages: boolean = false;
 	let isMessageStreaming = false; // Placeholder for streaming state
+	let abortController: AbortController | null = null;
+	const USER_ABORT_MARKER = '[유저에 의해 중단됨]';
+	const isAbortError = (error: unknown) =>
+		(error instanceof DOMException || error instanceof Error) && error.name === 'AbortError';
+	const stopGeneration = () => abortController?.abort();
+	let JS_TOOL_TIMEOUT_SEC = 300;
 
 	let conversationList: Array<Conversation> = [];
 	let currentConversationID: string = '';
@@ -53,6 +60,20 @@
 
 	let NAI_POSITIVE_PROMPT: string = '';
 	let NAI_NEGATIVE_PROMPT: string = '';
+	let GEMINI_SCRATCHPAD: string = '';
+
+	$: currentConversationId.set(currentConversationID);
+
+	// Keep local state in sync when the scratchpad tool changes the note
+	scratchpadUpdate.subscribe((update) => {
+		if (!update) return;
+		const convo = conversationList.find((c) => c.id === update.conversationId);
+		if (convo) convo.settings = { ...(convo.settings || {}), scratchpad: update.text };
+		if (update.conversationId === currentConversationID) GEMINI_SCRATCHPAD = update.text;
+	});
+	conversationsChanged.subscribe((n) => {
+		if (n > 0) loadConversations();
+	});
 
 	let CUSTOM_TOOL_TOGGLE: boolean = true; // Toggle for tool usage
 	let IMAGE_RECENT_LIMIT = 5; // Max number of recent images to keep in history
@@ -137,6 +158,7 @@
 
 		CUSTOM_TOOL_TOGGLE = localStorage.getItem('CUSTOM_TOOL_TOGGLE') === 'true';
 		IMAGE_RECENT_LIMIT = parseInt(localStorage.getItem('IMAGE_RECENT_LIMIT') || '5', 10);
+		JS_TOOL_TIMEOUT_SEC = parseInt(localStorage.getItem('JS_TOOL_TIMEOUT_SEC') || '300', 10) || 300;
 		SHOW_IMAGE_OUTSIDE = localStorage.getItem('SHOW_IMAGE_OUTSIDE') === 'true';
 
 		applyTheme(currentTheme);
@@ -173,7 +195,8 @@
 				settings: {
 					systemPrompt: GEMINI_SYSTEM_PROMPT,
 					naiPositivePrompt: NAI_POSITIVE_PROMPT,
-					naiNegativePrompt: NAI_NEGATIVE_PROMPT
+					naiNegativePrompt: NAI_NEGATIVE_PROMPT,
+					scratchpad: GEMINI_SCRATCHPAD
 				}
 			})
 		})
@@ -212,6 +235,14 @@
 
 		//@ts-ignore
 		console.log('Function call result:', toolResult);
+
+		// Remember generation info so old images can be summarized for the LLM later
+		if (functionName === 'imageGeneration' && toolResult?.data?.inlineData) {
+			toolResult.data.imageMeta = {
+				positivePrompt: part.functionCall.args?.positivePrompt,
+				seed: part.functionCall.args?.seed
+			};
+		}
 
 		if (toolResult == null) {
 			console.warn(`Function ${functionName} intentionally returned null. Skipping response.`);
@@ -255,6 +286,17 @@
 		focusToInput();
 		initializeFromLocalStorage();
 		initializeAuthToken();
+
+		installSeulgiBridge({
+			sendMessage: (text: string) => {
+				inputMessage = text;
+				handleSend();
+			},
+			setInput: (text: string) => {
+				inputMessage = text;
+				focusToInput();
+			}
+		});
 
 		window.onerror = (message, source, lineno, colno, error) => {
 			console.error('Global error handler:', message, source, lineno, colno, error);
@@ -426,6 +468,10 @@
 			(conversationList.find((conv) => conv.id === conversationID)?.settings || {})
 				.naiNegativePrompt || defaultNAINegativePrompt;
 
+		GEMINI_SCRATCHPAD =
+			(conversationList.find((conv) => conv.id === conversationID)?.settings || {}).scratchpad ||
+			'';
+
 		// Fetching messages for a specific conversation
 		apiFetch(`/api/message?conversation_id=${conversationID}`, {
 			method: 'GET',
@@ -528,13 +574,23 @@
 					if (removedCount >= excessCount) break; // Stop if we've removed enough images
 
 					if (msg.parts) {
-						msg.parts = msg.parts.filter((part) => {
+						msg.parts = msg.parts.flatMap((part: any) => {
 							if (part.inlineData && part.inlineData.data && removedCount < excessCount) {
 								removedCount++;
 								modifiedMessages.add(msg.id);
-								return false; // Remove this image part
+								// Keep a text trace so the message is never left empty
+								const meta = part.imageMeta || {};
+								const kind = (part.inlineData.mimeType || 'image/*').split('/')[0];
+								return [
+									{
+										text:
+											kind === 'image'
+												? `[Removed Image | Prompt: ${meta.positivePrompt ?? 'unknown'} | Seed: ${meta.seed ?? 'unknown'}]`
+												: `[Removed ${part.inlineData.mimeType || 'media'}]`
+									}
+								];
 							}
-							return true; // Keep this part
+							return [part]; // Keep this part
 						});
 					}
 				}
@@ -605,7 +661,7 @@
 		let body = {
 			contents: context,
 			system_instruction: {
-				parts: [{ text: GEMINI_SYSTEM_PROMPT }]
+				parts: [{ text: buildSystemPrompt(GEMINI_SYSTEM_PROMPT, GEMINI_SCRATCHPAD) }]
 			},
 			tools: CUSTOM_TOOL_TOGGLE
 				? tools
@@ -669,6 +725,7 @@
 		let response = await fetch(
 			`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
 			{
+				signal: abortController?.signal,
 				credentials: 'omit',
 				headers: {
 					// 'Accept-Language': 'ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3',
@@ -852,15 +909,7 @@
 	const handleAPI = async () => {
 		scrollToBottom();
 		// -- // Create entire context for the LLM API from the messageList
-		let context: Content[] = [];
-
-		// Create context from messageList
-		for (const message of messageList) {
-			context.push({
-				role: message.role,
-				parts: message.parts
-			});
-		}
+		let context: Content[] = buildContext(messageList);
 
 		console.log('target context', context);
 
@@ -871,13 +920,32 @@
 		streamingMessage.parts = []; // Initialize parts for the streaming message
 		$streamingText = ''; // Reset streaming text
 
-		GEMINI_DO_STREAMING
-			? await receiveStream(context, streamingMessage)
-			: await receive(context, streamingMessage);
+		abortController = new AbortController();
+		let aborted = false;
+		try {
+			GEMINI_DO_STREAMING
+				? await receiveStream(context, streamingMessage)
+				: await receive(context, streamingMessage);
+		} catch (error) {
+			if (isAbortError(error)) {
+				aborted = true;
+			} else {
+				// Network/parse failure: never leave the loading bar stuck
+				console.error('Error during LLM API call:', error);
+			}
+		} finally {
+			// Streaming complete (or failed/aborted)
+			isMessageStreaming = false;
+			abortController = null;
+		}
 
-		// Streaming complete
-		isMessageStreaming = false;
+		if (aborted) {
+			// A dangling functionCall without a response would break the next request
+			streamingMessage.parts = streamingMessage.parts.filter((part) => !part.functionCall);
+		}
 
+		// Nothing was received (error or empty abort): do not save an empty message
+		if (streamingMessage.parts.length === 0) return;
 		// Merging text parts in streamingMessage parts
 		// -- // Filter if any text part
 		const textParts = streamingMessage.parts.filter((part) => part.text);
@@ -904,6 +972,10 @@
 				(part) => !part.text || part === firstTextPart
 			);
 		}
+
+		if (aborted) {
+			streamingMessage.parts.push({ text: USER_ABORT_MARKER });
+		}
 		messageList = [...messageList, { ...streamingMessage }];
 
 		const postOriginalPromise = apiFetch(`/api/message`, {
@@ -929,7 +1001,7 @@
 		let body = {
 			contents: context,
 			system_instruction: {
-				parts: [{ text: GEMINI_SYSTEM_PROMPT }]
+				parts: [{ text: buildSystemPrompt(GEMINI_SYSTEM_PROMPT, GEMINI_SCRATCHPAD) }]
 			},
 			tools: CUSTOM_TOOL_TOGGLE
 				? tools
@@ -994,6 +1066,7 @@
 			let response = await fetch(
 				`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:streamGenerateContent?key=${GEMINI_API_KEY}&alt=sse`,
 				{
+					signal: abortController?.signal,
 					credentials: 'omit',
 					headers: {
 						// Accept: '*/*',
@@ -1086,6 +1159,7 @@
 				}
 			}
 		} catch (error) {
+			if (isAbortError(error)) throw error; // handled in handleAPI (keeps partial output)
 			console.error('Error during LLM API call:', error);
 			isMessageStreaming = false; // Reset streaming state on error
 
@@ -1237,6 +1311,18 @@
 						step="1"
 					/>
 					<br />
+					<span>JS tool timeout (sec): {JS_TOOL_TIMEOUT_SEC}</span>
+					<input
+						type="number"
+						placeholder="JS_TOOL_TIMEOUT_SEC"
+						bind:value={JS_TOOL_TIMEOUT_SEC}
+						oninput={() =>
+							localStorage.setItem('JS_TOOL_TIMEOUT_SEC', String(JS_TOOL_TIMEOUT_SEC || 300))}
+						min="1"
+						max="3600"
+						step="1"
+					/>
+					<br />
 					<label for="use-custom-tool-checkbox">Use Custom Tools</label>
 					<input
 						type="checkbox"
@@ -1287,6 +1373,17 @@
 						placeholder="NAI Negative Prompt"
 						bind:value={NAI_NEGATIVE_PROMPT}
 						oninput={() => updateConversationData()}
+					></textarea>
+					<br />
+					<span>Scratchpad (슬기의 노트)</span>
+					<textarea
+						placeholder="Active scratchpad"
+						bind:value={GEMINI_SCRATCHPAD}
+						oninput={() => {
+							const convo = conversationList.find((c) => c.id === currentConversationID);
+							if (convo) convo.settings = { ...(convo.settings || {}), scratchpad: GEMINI_SCRATCHPAD };
+							updateConversationData();
+						}}
 					></textarea>
 				</div>
 			</details>
@@ -1349,6 +1446,14 @@
 			}}>+</button
 		>
 		<textarea placeholder="메시지 입력" bind:value={inputMessage}></textarea>
+		{#if isMessageStreaming || $isRunningJs}
+			<button
+				id="stop-button"
+				onclick={() => (isMessageStreaming ? stopGeneration() : stopJavascript())}
+				aria-label="Stop generating"
+				title="중단">⏹</button
+			>
+		{/if}
 		<button id="send-button" onclick={() => handleSend()} aria-label="Send message">
 			<span
 				style="content: url('https://api.iconify.design/line-md/arrow-right-square.svg'); width: 24px; height: 24px; display: inline-block; filter: {currentTheme ===

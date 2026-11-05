@@ -11,6 +11,20 @@
 
 	let isEditing = false;
 	let partsString = JSON.stringify(message.parts);
+
+	// Per-image LLM context control: auto (decays) -> muted (never sent) -> pinned (always sent)
+	const modes = ['auto', 'muted', 'pinned'] as const;
+	const modeOf = (part: any) => part.imageMeta?.contextMode || 'auto';
+	const contextIcon = (part: any) =>
+		modeOf(part) === 'muted' ? '🚫' : modeOf(part) === 'pinned' ? '📌' : '👁️';
+	const contextTitle = (part: any) =>
+		`LLM image context: ${modeOf(part)} (click to change: auto → muted → pinned)`;
+	const cycleContextMode = (part: any) => {
+		const next = modes[(modes.indexOf(modeOf(part)) + 1) % modes.length];
+		part.imageMeta = { ...(part.imageMeta || {}), contextMode: next };
+		message = message;
+		editMessage();
+	};
 	// export let streamingText: string = '';
 </script>
 
@@ -30,13 +44,21 @@
 						{@html marked.parse(part.text)}
 					{:else if part.inlineData && part.inlineData.data}
 						{#if part.inlineData.data.startsWith('data:image') || part.inlineData.mimeType?.startsWith('image/')}
-							<img
-								src={part.inlineData.data.startsWith('data:image')
-									? part.inlineData.data
-									: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
-								alt="User uploaded image"
-								style=" max-width: 70%; border-radius: 4px;"
-							/>
+							<span class="image-wrapper">
+								<img
+									src={part.inlineData.data.startsWith('data:image')
+										? part.inlineData.data
+										: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
+									alt="User uploaded image"
+									style=" max-width: 70%; border-radius: 4px;"
+								/>
+								<button
+									type="button"
+									class="context-toggle"
+									title={contextTitle(part)}
+									onclick={() => cycleContextMode(part)}>{contextIcon(part)}</button
+								>
+							</span>
 						{:else if part.inlineData.data.startsWith('data:audio') || part.inlineData.mimeType?.startsWith('audio/')}
 							<audio
 								src={part.inlineData.data.startsWith('data:audio')
@@ -123,13 +145,21 @@
 						{@html marked.parse(part.text)}
 					{:else if part.inlineData && part.inlineData.data}
 						{#if part.inlineData.data.startsWith('data:image') || part.inlineData.mimeType?.startsWith('image/')}
-							<img
-								src={part.inlineData.data.startsWith('data:image')
-									? part.inlineData.data
-									: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
-								alt="User uploaded image"
-								style=" max-width: 70%; border-radius: 4px;"
-							/>
+							<span class="image-wrapper">
+								<img
+									src={part.inlineData.data.startsWith('data:image')
+										? part.inlineData.data
+										: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
+									alt="User uploaded image"
+									style=" max-width: 70%; border-radius: 4px;"
+								/>
+								<button
+									type="button"
+									class="context-toggle"
+									title={contextTitle(part)}
+									onclick={() => cycleContextMode(part)}>{contextIcon(part)}</button
+								>
+							</span>
 						{:else if part.inlineData.data.startsWith('data:audio') || part.inlineData.mimeType?.startsWith('audio/')}
 							<audio
 								src={part.inlineData.data.startsWith('data:audio')
@@ -172,6 +202,29 @@
 </div>
 
 <style>
+	.image-wrapper {
+		position: relative;
+		display: inline-block;
+		max-width: 70%;
+	}
+	.image-wrapper img {
+		max-width: 100% !important;
+		display: block;
+	}
+	.context-toggle {
+		position: absolute;
+		top: 4px;
+		right: 4px;
+		padding: 0 4px;
+		font-size: 14px;
+		line-height: 1.4;
+		opacity: 0.6;
+		cursor: pointer;
+		border-radius: 4px;
+	}
+	.context-toggle:hover {
+		opacity: 1;
+	}
 	.message {
 		margin-left: 10px;
 		margin-right: 10px;

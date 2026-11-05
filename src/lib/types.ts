@@ -9,7 +9,16 @@ export interface Conversation {
 		systemPrompt?: string;
 		naiPositivePrompt?: string;
 		naiNegativePrompt?: string;
+		scratchpad?: string;
 	};
+}
+
+export type ImageContextMode = 'auto' | 'muted' | 'pinned';
+
+export interface ImageMeta {
+	positivePrompt?: string;
+	seed?: number | string;
+	contextMode?: ImageContextMode;
 }
 
 export interface Message {

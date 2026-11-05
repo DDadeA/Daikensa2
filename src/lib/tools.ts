@@ -5,7 +5,51 @@ import JSZip from 'jszip';
 import { writable } from 'svelte/store';
 import { apiFetch } from '$lib/api';
 import { get } from 'svelte/store';
-import { nai_api_key } from '$lib/stores';
+import {
+	nai_api_key,
+	currentConversationId,
+	scratchpadUpdate,
+	conversationsChanged
+} from '$lib/stores';
+
+export const JS_TOOL_DEFAULT_TIMEOUT_SEC = 300;
+
+export const isRunningJs = writable<boolean>(false);
+let cancelJsRun: (() => void) | null = null;
+// Stops waiting for the running javascript tool (the script itself cannot be killed in the browser)
+export const stopJavascript = () => cancelJsRun?.();
+
+// Tool parameter wins; otherwise the user setting from localStorage; otherwise the default.
+export const getJsTimeoutSeconds = (override?: number) => {
+	const valid = (n: any) => typeof n === 'number' && isFinite(n) && n > 0;
+	if (valid(override)) return override as number;
+	const stored = typeof localStorage !== 'undefined' ? Number(localStorage.getItem('JS_TOOL_TIMEOUT_SEC')) : NaN;
+	return valid(stored) ? stored : JS_TOOL_DEFAULT_TIMEOUT_SEC;
+};
+const HUD_ATTR = 'data-seulgi-hud';
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
+	...args: string[]
+) => () => Promise<any>;
+
+// Handlers are provided by the page (chat UI) when it mounts
+const bridgeHandlers = {
+	sendMessage: (_text: string) => {},
+	setInput: (_text: string) => {}
+};
+
+export const removeAllHUDs = () => {
+	if (typeof document === 'undefined') return;
+	document.querySelectorAll(`[${HUD_ATTR}]`).forEach((el) => el.remove());
+};
+
+export const installSeulgiBridge = (handlers: Partial<typeof bridgeHandlers>) => {
+	Object.assign(bridgeHandlers, handlers);
+	(window as any).seulgiBridge = {
+		sendMessage: (text: string) => bridgeHandlers.sendMessage(String(text)),
+		setInput: (text: string) => bridgeHandlers.setInput(String(text)),
+		removeAllHUDs
+	};
+};
 
 const PROMPT_TEMPLATE = `
 Refer ### Guide for Image tools (NovelAI Diffusion V5 Standard)
@@ -77,13 +121,18 @@ export const tools: Tool[] = [
 			{
 				// behavior: Behavior.BLOCKING,
 				name: 'javascript',
-				description: 'Run a JavaScript expression and return the console.log() output.',
+				description:
+					'Run JavaScript in the browser and return the console.log() output and the returned value. Top-level await and return are supported (default timeout 300s; pass timeoutSeconds to change it). Elements you append to document.body are tagged as HUD widgets. `window.seulgiBridge` offers sendMessage(text) (send a chat message as the user), setInput(text) (fill the input box) and removeAllHUDs() (remove all HUD widgets).',
 				parameters: {
 					type: Type.OBJECT,
 					properties: {
 						expression: {
 							type: Type.STRING,
 							description: 'The JavaScript expression to run.'
+						},
+						timeoutSeconds: {
+							type: Type.NUMBER,
+							description: 'Optional execution timeout in seconds. Defaults to the user setting (300s).'
 						}
 					},
 					required: ['expression']
@@ -138,6 +187,57 @@ export const tools: Tool[] = [
 				}
 			},
 			{
+				name: 'scratchpad',
+				description:
+					"Read or edit the active scratchpad (short-term notes, checklists) of this conversation. It is automatically included in the system prompt. Returns the full updated note.",
+				parameters: {
+					type: Type.OBJECT,
+					properties: {
+						action: {
+							type: Type.STRING,
+							enum: ['read', 'write', 'append', 'replace'],
+							description: 'read: return the note, write: overwrite, append: add text, replace: substitute target with replacement.'
+						},
+						content: {
+							type: Type.STRING,
+							description: 'Text to write (overwrite) or append.'
+						},
+						target: {
+							type: Type.STRING,
+							description: 'For replace: the existing text to find (first occurrence).'
+						},
+						replacement: {
+							type: Type.STRING,
+							description: 'For replace: the new text.'
+						}
+					},
+					required: ['action']
+				}
+			},
+			{
+				name: 'sessionHandover',
+				description:
+					'Atomically finish this session: append sessionSummary to this conversation\'s system prompt, then create the next (empty) conversation with cloned settings and the session anchor `Here is [current]` renamed to `Here is [nextTitle]`.',
+				parameters: {
+					type: Type.OBJECT,
+					properties: {
+						nextTitle: {
+							type: Type.STRING,
+							description: "Title of the next session (e.g. '59-main')."
+						},
+						sessionSummary: {
+							type: Type.STRING,
+							description: 'English session summary appended to the bottom of the lorebook.'
+						},
+						scratchpadUpdate: {
+							type: Type.STRING,
+							description: 'Optional updated scratchpad text for the next session.'
+						}
+					},
+					required: ['nextTitle', 'sessionSummary']
+				}
+			},
+			{
 				name: 'imageGeneration',
 				description: `Generate an image based on the given prompts. \n${PROMPT_TEMPLATE}`,
 				parameters: {
@@ -184,7 +284,8 @@ export const actualTool: Record<string, (params: any) => Promise<ToolResult | nu
 			data: makeFunctionResponse('alert', { message: 'Alert displayed' })
 		};
 	},
-	javascript: async (params: { expression: string }) => {
+	javascript: async (params: { expression: string; timeoutSeconds?: number }) => {
+		const timeoutMs = getJsTimeoutSeconds(params.timeoutSeconds) * 1000;
 		// From now, all logs will be captured
 		const originalConsoleLog = console.log;
 		let capturedLogs: string[] = [];
@@ -193,16 +294,40 @@ export const actualTool: Record<string, (params: any) => Promise<ToolResult | nu
 			capturedLogs.push(args.join(' '));
 		};
 
+		// Widgets appended to <body> during execution are tagged so removeAllHUDs() can clean them up
+		const bodyChildrenBefore = new Set(Array.from(document.body.children));
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		isRunningJs.set(true);
+
 		try {
-			// eval(params.expression.replaceAll('\\n', '\n'));
-			let targetFunction = new Function(params.expression);
-			targetFunction();
+			const targetFunction = new AsyncFunction(params.expression);
+			const returned = await Promise.race([
+				targetFunction(),
+				new Promise<never>((_, reject) => {
+					timer = setTimeout(
+						() => reject(new Error(`Timed out after ${timeoutMs / 1000}s`)),
+						timeoutMs
+					);
+					cancelJsRun = () => reject(new Error('[유저에 의해 중단됨]'));
+				})
+			]);
+			if (returned !== undefined) {
+				capturedLogs.push(`[return] ${convertToString(returned)}`);
+			}
 		} catch (error) {
 			capturedLogs.push(`Error: ${error instanceof Error ? error.message : String(error)}`);
+		} finally {
+			clearTimeout(timer);
+			cancelJsRun = null;
+			isRunningJs.set(false);
+			// Restore original console.log
+			console.log = originalConsoleLog;
+			Array.from(document.body.children).forEach((el) => {
+				if (!bodyChildrenBefore.has(el) && ['DIV', 'SECTION', 'ASIDE'].includes(el.tagName)) {
+					el.setAttribute(HUD_ATTR, '');
+				}
+			});
 		}
-
-		// Restore original console.log
-		console.log = originalConsoleLog;
 
 		if (capturedLogs.length == 0) {
 			capturedLogs.push(
@@ -252,6 +377,47 @@ export const actualTool: Record<string, (params: any) => Promise<ToolResult | nu
 			data: makeFunctionResponse('query', thoughtCleanup(res.result.rows))
 		};
 	},
+	scratchpad: async (params: {
+		action: 'read' | 'write' | 'append' | 'replace';
+		content?: string;
+		target?: string;
+		replacement?: string;
+	}) => {
+		const conversationId = get(currentConversationId);
+		const res = await apiFetch('/api/scratchpad', {
+			method: 'POST',
+			body: JSON.stringify({ conversation_id: conversationId, ...params })
+		});
+		if (res.error) {
+			return {
+				sendBack: true,
+				role: 'user',
+				data: makeFunctionResponse('scratchpad', { success: false, error: res.error })
+			};
+		}
+		scratchpadUpdate.set({ conversationId, text: res.scratchpad });
+		return {
+			sendBack: true,
+			role: 'user',
+			data: makeFunctionResponse('scratchpad', res.scratchpad, false)
+		};
+	},
+	sessionHandover: async (params: {
+		nextTitle: string;
+		sessionSummary: string;
+		scratchpadUpdate?: string;
+	}) => {
+		const res = await apiFetch('/api/handover', {
+			method: 'POST',
+			body: JSON.stringify({ conversation_id: get(currentConversationId), ...params })
+		});
+		if (res.success) conversationsChanged.update((n) => n + 1);
+		return {
+			sendBack: true,
+			role: 'user',
+			data: makeFunctionResponse('sessionHandover', res)
+		};
+	},
 	imageGeneration: async (
 		params: {
 			positivePrompt: string;
@@ -296,11 +462,11 @@ function convertToString(val:any) {
 }
 
 
-const makeFunctionResponse = (functionName: string, result: any) => {
+const makeFunctionResponse = (functionName: string, result: any, truncate: boolean = true) => {
 	let output = convertToString(result);
 
 	// Trim
-	if (output.length > functionOutputLimit) {
+	if (truncate && output.length > functionOutputLimit) {
 		output = output.slice(0, functionOutputLimit) + `(${output.length - functionOutputLimit} characters are truncated.)`;
 	}
 	
