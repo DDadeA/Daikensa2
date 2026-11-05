@@ -10,8 +10,9 @@
 		FunctionCallingConfigMode
 	} from '@google/genai';
 	import type { Part, Content } from '@google/genai';
-	import { tools, actualTool, cancelToolAwait } from '$lib/tools';
-	import { streamingText, nai_api_key } from '$lib/stores';
+	import { tools, actualTool, cancelToolAwait, installSeulgiBridge } from '$lib/tools';
+	import { streamingText, nai_api_key, currentConversationId, scratchpadUpdate, conversationsChanged } from '$lib/stores';
+	import { buildContext, buildSystemPrompt } from '$lib/context';
 	import { apiFetch } from '$lib/api';
 	import { isAskingChoice, choiceOptions, handleChoice } from '$lib/tools';
 
@@ -53,6 +54,20 @@
 
 	let NAI_POSITIVE_PROMPT: string = '';
 	let NAI_NEGATIVE_PROMPT: string = '';
+	let GEMINI_SCRATCHPAD: string = '';
+
+	$: currentConversationId.set(currentConversationID);
+
+	// Keep local state in sync when the scratchpad tool changes the note
+	scratchpadUpdate.subscribe((update) => {
+		if (!update) return;
+		const convo = conversationList.find((c) => c.id === update.conversationId);
+		if (convo) convo.settings = { ...(convo.settings || {}), scratchpad: update.text };
+		if (update.conversationId === currentConversationID) GEMINI_SCRATCHPAD = update.text;
+	});
+	conversationsChanged.subscribe((n) => {
+		if (n > 0) loadConversations();
+	});
 
 	let CUSTOM_TOOL_TOGGLE: boolean = true; // Toggle for tool usage
 	let IMAGE_RECENT_LIMIT = 5; // Max number of recent images to keep in history
@@ -173,7 +188,8 @@
 				settings: {
 					systemPrompt: GEMINI_SYSTEM_PROMPT,
 					naiPositivePrompt: NAI_POSITIVE_PROMPT,
-					naiNegativePrompt: NAI_NEGATIVE_PROMPT
+					naiNegativePrompt: NAI_NEGATIVE_PROMPT,
+					scratchpad: GEMINI_SCRATCHPAD
 				}
 			})
 		})
@@ -212,6 +228,14 @@
 
 		//@ts-ignore
 		console.log('Function call result:', toolResult);
+
+		// Remember generation info so old images can be summarized for the LLM later
+		if (functionName === 'imageGeneration' && toolResult?.data?.inlineData) {
+			toolResult.data.imageMeta = {
+				positivePrompt: part.functionCall.args?.positivePrompt,
+				seed: part.functionCall.args?.seed
+			};
+		}
 
 		if (toolResult == null) {
 			console.warn(`Function ${functionName} intentionally returned null. Skipping response.`);
@@ -255,6 +279,17 @@
 		focusToInput();
 		initializeFromLocalStorage();
 		initializeAuthToken();
+
+		installSeulgiBridge({
+			sendMessage: (text: string) => {
+				inputMessage = text;
+				handleSend();
+			},
+			setInput: (text: string) => {
+				inputMessage = text;
+				focusToInput();
+			}
+		});
 
 		window.onerror = (message, source, lineno, colno, error) => {
 			console.error('Global error handler:', message, source, lineno, colno, error);
@@ -426,6 +461,10 @@
 			(conversationList.find((conv) => conv.id === conversationID)?.settings || {})
 				.naiNegativePrompt || defaultNAINegativePrompt;
 
+		GEMINI_SCRATCHPAD =
+			(conversationList.find((conv) => conv.id === conversationID)?.settings || {}).scratchpad ||
+			'';
+
 		// Fetching messages for a specific conversation
 		apiFetch(`/api/message?conversation_id=${conversationID}`, {
 			method: 'GET',
@@ -528,13 +567,23 @@
 					if (removedCount >= excessCount) break; // Stop if we've removed enough images
 
 					if (msg.parts) {
-						msg.parts = msg.parts.filter((part) => {
+						msg.parts = msg.parts.flatMap((part: any) => {
 							if (part.inlineData && part.inlineData.data && removedCount < excessCount) {
 								removedCount++;
 								modifiedMessages.add(msg.id);
-								return false; // Remove this image part
+								// Keep a text trace so the message is never left empty
+								const meta = part.imageMeta || {};
+								const kind = (part.inlineData.mimeType || 'image/*').split('/')[0];
+								return [
+									{
+										text:
+											kind === 'image'
+												? `[Removed Image | Prompt: ${meta.positivePrompt ?? 'unknown'} | Seed: ${meta.seed ?? 'unknown'}]`
+												: `[Removed ${part.inlineData.mimeType || 'media'}]`
+									}
+								];
 							}
-							return true; // Keep this part
+							return [part]; // Keep this part
 						});
 					}
 				}
@@ -605,7 +654,7 @@
 		let body = {
 			contents: context,
 			system_instruction: {
-				parts: [{ text: GEMINI_SYSTEM_PROMPT }]
+				parts: [{ text: buildSystemPrompt(GEMINI_SYSTEM_PROMPT, GEMINI_SCRATCHPAD) }]
 			},
 			tools: CUSTOM_TOOL_TOGGLE
 				? tools
@@ -852,15 +901,7 @@
 	const handleAPI = async () => {
 		scrollToBottom();
 		// -- // Create entire context for the LLM API from the messageList
-		let context: Content[] = [];
-
-		// Create context from messageList
-		for (const message of messageList) {
-			context.push({
-				role: message.role,
-				parts: message.parts
-			});
-		}
+		let context: Content[] = buildContext(messageList);
 
 		console.log('target context', context);
 
@@ -929,7 +970,7 @@
 		let body = {
 			contents: context,
 			system_instruction: {
-				parts: [{ text: GEMINI_SYSTEM_PROMPT }]
+				parts: [{ text: buildSystemPrompt(GEMINI_SYSTEM_PROMPT, GEMINI_SCRATCHPAD) }]
 			},
 			tools: CUSTOM_TOOL_TOGGLE
 				? tools
@@ -1287,6 +1328,17 @@
 						placeholder="NAI Negative Prompt"
 						bind:value={NAI_NEGATIVE_PROMPT}
 						oninput={() => updateConversationData()}
+					></textarea>
+					<br />
+					<span>Scratchpad (슬기의 노트)</span>
+					<textarea
+						placeholder="Active scratchpad"
+						bind:value={GEMINI_SCRATCHPAD}
+						oninput={() => {
+							const convo = conversationList.find((c) => c.id === currentConversationID);
+							if (convo) convo.settings = { ...(convo.settings || {}), scratchpad: GEMINI_SCRATCHPAD };
+							updateConversationData();
+						}}
 					></textarea>
 				</div>
 			</details>
