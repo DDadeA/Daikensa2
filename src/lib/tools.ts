@@ -12,7 +12,20 @@ import {
 	conversationsChanged
 } from '$lib/stores';
 
-const JS_TOOL_TIMEOUT_MS = 10000;
+export const JS_TOOL_DEFAULT_TIMEOUT_SEC = 300;
+
+export const isRunningJs = writable<boolean>(false);
+let cancelJsRun: (() => void) | null = null;
+// Stops waiting for the running javascript tool (the script itself cannot be killed in the browser)
+export const stopJavascript = () => cancelJsRun?.();
+
+// Tool parameter wins; otherwise the user setting from localStorage; otherwise the default.
+export const getJsTimeoutSeconds = (override?: number) => {
+	const valid = (n: any) => typeof n === 'number' && isFinite(n) && n > 0;
+	if (valid(override)) return override as number;
+	const stored = typeof localStorage !== 'undefined' ? Number(localStorage.getItem('JS_TOOL_TIMEOUT_SEC')) : NaN;
+	return valid(stored) ? stored : JS_TOOL_DEFAULT_TIMEOUT_SEC;
+};
 const HUD_ATTR = 'data-seulgi-hud';
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
 	...args: string[]
@@ -109,13 +122,17 @@ export const tools: Tool[] = [
 				// behavior: Behavior.BLOCKING,
 				name: 'javascript',
 				description:
-					'Run JavaScript in the browser and return the console.log() output and the returned value. Top-level await and return are supported (10s timeout). Elements you append to document.body are tagged as HUD widgets. `window.seulgiBridge` offers sendMessage(text) (send a chat message as the user), setInput(text) (fill the input box) and removeAllHUDs() (remove all HUD widgets).',
+					'Run JavaScript in the browser and return the console.log() output and the returned value. Top-level await and return are supported (default timeout 300s; pass timeoutSeconds to change it). Elements you append to document.body are tagged as HUD widgets. `window.seulgiBridge` offers sendMessage(text) (send a chat message as the user), setInput(text) (fill the input box) and removeAllHUDs() (remove all HUD widgets).',
 				parameters: {
 					type: Type.OBJECT,
 					properties: {
 						expression: {
 							type: Type.STRING,
 							description: 'The JavaScript expression to run.'
+						},
+						timeoutSeconds: {
+							type: Type.NUMBER,
+							description: 'Optional execution timeout in seconds. Defaults to the user setting (300s).'
 						}
 					},
 					required: ['expression']
@@ -267,7 +284,8 @@ export const actualTool: Record<string, (params: any) => Promise<ToolResult | nu
 			data: makeFunctionResponse('alert', { message: 'Alert displayed' })
 		};
 	},
-	javascript: async (params: { expression: string }) => {
+	javascript: async (params: { expression: string; timeoutSeconds?: number }) => {
+		const timeoutMs = getJsTimeoutSeconds(params.timeoutSeconds) * 1000;
 		// From now, all logs will be captured
 		const originalConsoleLog = console.log;
 		let capturedLogs: string[] = [];
@@ -279,6 +297,7 @@ export const actualTool: Record<string, (params: any) => Promise<ToolResult | nu
 		// Widgets appended to <body> during execution are tagged so removeAllHUDs() can clean them up
 		const bodyChildrenBefore = new Set(Array.from(document.body.children));
 		let timer: ReturnType<typeof setTimeout> | undefined;
+		isRunningJs.set(true);
 
 		try {
 			const targetFunction = new AsyncFunction(params.expression);
@@ -286,9 +305,10 @@ export const actualTool: Record<string, (params: any) => Promise<ToolResult | nu
 				targetFunction(),
 				new Promise<never>((_, reject) => {
 					timer = setTimeout(
-						() => reject(new Error(`Timed out after ${JS_TOOL_TIMEOUT_MS / 1000}s`)),
-						JS_TOOL_TIMEOUT_MS
+						() => reject(new Error(`Timed out after ${timeoutMs / 1000}s`)),
+						timeoutMs
 					);
+					cancelJsRun = () => reject(new Error('[유저에 의해 중단됨]'));
 				})
 			]);
 			if (returned !== undefined) {
@@ -298,6 +318,8 @@ export const actualTool: Record<string, (params: any) => Promise<ToolResult | nu
 			capturedLogs.push(`Error: ${error instanceof Error ? error.message : String(error)}`);
 		} finally {
 			clearTimeout(timer);
+			cancelJsRun = null;
+			isRunningJs.set(false);
 			// Restore original console.log
 			console.log = originalConsoleLog;
 			Array.from(document.body.children).forEach((el) => {
