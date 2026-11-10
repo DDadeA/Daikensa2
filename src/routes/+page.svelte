@@ -586,7 +586,7 @@
 									{
 										text:
 											kind === 'image'
-												? `[Removed Image | Prompt: ${meta.positivePrompt ?? 'unknown'} | Seed: ${meta.seed ?? 'unknown'}]`
+												? `[Removed Image]`
 												: `[Removed ${part.inlineData.mimeType || 'media'}]`
 									}
 								];
