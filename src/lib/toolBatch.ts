@@ -95,7 +95,8 @@ export const backgroundNotice = (taskId: string, name: string, graceMs: number) 
     `Continue with the other results and do not guess this one.]`;
 
 export interface SqueezedBatch {
-    parts: Part[];
+    parts: Part[]; // the single user message: one functionResponse per call
+    media: Part[]; // generated media: sent as a separate model message, as for a single call
     sendBack: boolean;
     taskIds: (string | null)[]; // per call: task id when it went to the background
 }
@@ -130,21 +131,23 @@ export const squeezeOutcomes = (
             responses.push(outcome.value.data);
             sendBack ||= outcome.value.sendBack;
         } else {
-            // Media such as a generated image: every call still needs its response
+            // Media such as a generated image: every call still needs its response, the image itself
+            // follows as the model's own message
             responses.push(
-                functionResponse(name, 'Done. The generated media is attached after the tool responses.')
+                functionResponse(name, 'Done. The generated media follows in the next message.')
             );
             media.push(outcome.value.data);
             sendBack ||= outcome.value.sendBack;
         }
     });
 
-    return { parts: [...responses, ...media], sendBack, taskIds };
+    return { parts: responses, media, sendBack, taskIds };
 };
 
 export interface LateItem {
     conversationId: string;
-    parts: Part[];
+    parts: Part[]; // user message parts
+    media: Part[]; // generated media (separate model message)
     sendBack: boolean;
 }
 
@@ -158,6 +161,7 @@ export const lateItemFrom = (
         return {
             conversationId: info.conversationId,
             sendBack: true,
+            media: [],
             parts: [
                 {
                     text: `[Background task ${info.taskId} failed: ${info.name} after ${seconds}s]\n${errorMessage(settled.error)}`
@@ -168,16 +172,25 @@ export const lateItemFrom = (
     const result = settled.value;
     if (!result) return null; // e.g. a choice the user cancelled
     const header = `[Background task ${info.taskId} completed: ${info.name} after ${seconds}s]`;
-    const parts: Part[] = result.data?.functionResponse
-        ? [{ text: `${header}\n${outputOf(result.data)}` }]
-        : [{ text: header }, result.data];
-    return { conversationId: info.conversationId, sendBack: result.sendBack, parts };
+    const isText = !!result.data?.functionResponse;
+    return {
+        conversationId: info.conversationId,
+        sendBack: result.sendBack,
+        parts: [{ text: isText ? `${header}\n${outputOf(result.data)}` : header }],
+        media: isText ? [] : [result.data]
+    };
 };
+
+export interface Delivery {
+    parts: Part[];
+    media: Part[];
+    sendBack: boolean;
+}
 
 // Holds finished background results until they can be delivered without cutting into anything.
 export const createLateDelivery = (options: {
     isBusy: () => boolean;
-    deliver: (conversationId: string, parts: Part[], sendBack: boolean) => void;
+    deliver: (conversationId: string, delivery: Delivery) => void;
     retryMs?: number;
 }) => {
     const retryMs = options.retryMs ?? LATE_DELIVERY_RETRY_MS;
@@ -201,11 +214,11 @@ export const createLateDelivery = (options: {
             byConversation.set(item.conversationId, [...(byConversation.get(item.conversationId) ?? []), item]);
         }
         for (const [conversationId, group] of byConversation) {
-            options.deliver(
-                conversationId,
-                group.flatMap((item) => item.parts),
-                group.some((item) => item.sendBack)
-            );
+            options.deliver(conversationId, {
+                parts: group.flatMap((item) => item.parts),
+                media: group.flatMap((item) => item.media),
+                sendBack: group.some((item) => item.sendBack)
+            });
         }
     };
 
@@ -215,11 +228,12 @@ export const createLateDelivery = (options: {
             schedule();
         },
         // Removes the waiting results of a conversation so they can ride along with a tool-return message
-        take(conversationId: string): { parts: Part[]; sendBack: boolean } {
+        take(conversationId: string): Delivery {
             const taken = items.filter((item) => item.conversationId === conversationId);
             items = items.filter((item) => item.conversationId !== conversationId);
             return {
                 parts: taken.flatMap((item) => item.parts),
+                media: taken.flatMap((item) => item.media),
                 sendBack: taken.some((item) => item.sendBack)
             };
         },
