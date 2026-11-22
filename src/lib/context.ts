@@ -27,7 +27,7 @@ const describeImage = (part: any) => {
 // Converts messages into API contents. Old generated images become text metadata; UI messages are untouched.
 export const buildContext = (
 	messages: Message[],
-	options: { recentImageTurns?: number; recentMessages?: number } = {}
+	options: { recentImageTurns?: number; recentMessages?: number; keepProviderData?: boolean } = {}
 ): Content[] => {
 	const recentImageTurns = options.recentImageTurns ?? IMAGE_DECAY_RECENT_IMAGE_TURNS;
 	const recentMessages = options.recentMessages ?? IMAGE_DECAY_RECENT_MESSAGES;
@@ -43,7 +43,9 @@ export const buildContext = (
 
 	return messages.map((message, index) => {
 		const parts = (message.parts || []).flatMap((part: any): Part[] => {
-			const { imageMeta, ...apiPart } = part;
+			// `deepseek` holds DeepSeek-only data (server tool calls); Gemini rejects unknown fields
+			const { imageMeta, deepseek, ...geminiPart } = part;
+			const apiPart = options.keepProviderData && deepseek ? { ...geminiPart, deepseek } : geminiPart;
 			if (!isImagePart(part)) return [apiPart];
 
 			const mode: ImageContextMode = imageMeta?.contextMode || 'auto';

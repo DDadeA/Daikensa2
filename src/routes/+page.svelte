@@ -16,14 +16,22 @@
 	import { apiFetch } from '$lib/api';
 	import {
 		DEEPSEEK_ENDPOINT,
+		DEEPSEEK_ASR_ENDPOINT,
+		DEEPSEEK_WEB_TOOLS,
+		ASR_MAX_SECONDS,
+		ASR_SAMPLE_RATE,
 		deepseekModelList,
 		isDeepseekModel,
+		deepseekSupportsVision,
+		deepseekSupportsWebTools,
 		geminiToolsToDeepseek,
 		geminiContextToDeepseek,
 		buildDeepseekBody,
 		deepseekResponseToParts,
-		createDeepseekStreamAccumulator
+		createDeepseekStreamAccumulator,
+		encodeWav
 	} from '$lib/deepseek';
+	import type { DeepseekResult } from '$lib/deepseek';
 	import { isAskingChoice, choiceOptions, handleChoice, isRunningJs, stopJavascript } from '$lib/tools';
 
 	const defaultSystemPrompt = 'You are a helpful assistant.';
@@ -673,11 +681,80 @@
 		}
 	};
 
-	const receiveDeepseek = async (context: any, streamingMessage: any) => {
-		const messages = geminiContextToDeepseek(
-			context,
-			buildSystemPrompt(GEMINI_SYSTEM_PROMPT, GEMINI_SCRATCHPAD)
+	// DeepSeek chat takes no audio: voice messages are transcribed with its ASR API first.
+	// Results are cached in memory by audio data so older turns are not re-transcribed.
+	const asrCache = new Map<string, string>();
+
+	const base64ToBytes = (data: string) => {
+		const raw = atob(data.startsWith('data:') ? data.slice(data.indexOf(',') + 1) : data);
+		const bytes = new Uint8Array(raw.length);
+		for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+		return bytes;
+	};
+
+	const transcribeAudio = async (data: string): Promise<string> => {
+		const decoded = await new AudioContext().decodeAudioData(base64ToBytes(data).buffer);
+		if (decoded.duration > ASR_MAX_SECONDS) {
+			throw new Error(`audio is longer than ${ASR_MAX_SECONDS}s`);
+		}
+		// Resample to 16 kHz mono (channels are downmixed by the offline context)
+		const offline = new OfflineAudioContext(
+			1,
+			Math.ceil(decoded.duration * ASR_SAMPLE_RATE),
+			ASR_SAMPLE_RATE
 		);
+		const source = offline.createBufferSource();
+		source.buffer = decoded;
+		source.connect(offline.destination);
+		source.start();
+		const rendered = await offline.startRendering();
+		const wav = encodeWav(rendered.getChannelData(0), ASR_SAMPLE_RATE);
+
+		const form = new FormData();
+		form.append('file', new Blob([wav as BlobPart], { type: 'audio/wav' }), 'voice.wav');
+		const response = await fetch(DEEPSEEK_ASR_ENDPOINT, {
+			signal: abortController?.signal,
+			method: 'POST',
+			headers: { Authorization: `Bearer ${DEEPSEEK_API_KEY}` },
+			body: form
+		});
+		if (!response.ok) throw new Error(`ASR ${response.status}: ${await response.text()}`);
+		return ((await response.json()).text as string) || '';
+	};
+
+	const transcribeContextAudio = async (context: any[]) => {
+		for (const content of context) {
+			for (const part of content.parts || []) {
+				const data: string | undefined = part.inlineData?.data;
+				if (!data || !part.inlineData.mimeType?.startsWith('audio/') || asrCache.has(data)) continue;
+				try {
+					$streamingText = 'Transcribing voice message...';
+					asrCache.set(data, await transcribeAudio(data));
+				} catch (error) {
+					if (isAbortError(error)) throw error;
+					// Falls back to a text placeholder in the converted context
+					console.error('DeepSeek ASR failed:', error);
+				}
+			}
+		}
+		$streamingText = '';
+	};
+
+	const receiveDeepseek = async (context: any, streamingMessage: any) => {
+		await transcribeContextAudio(context);
+
+		// Same rule as Gemini: web tools and custom function tools cannot be mixed
+		const dsTools = CUSTOM_TOOL_TOGGLE
+			? geminiToolsToDeepseek(tools)
+			: deepseekSupportsWebTools(GEMINI_MODEL)
+				? DEEPSEEK_WEB_TOOLS
+				: [];
+		const messages = geminiContextToDeepseek(context, {
+			systemPrompt: buildSystemPrompt(GEMINI_SYSTEM_PROMPT, GEMINI_SCRATCHPAD),
+			vision: deepseekSupportsVision(GEMINI_MODEL),
+			passBackReasoning: GEMINI_THINKING && dsTools.length > 0,
+			transcripts: asrCache
+		});
 		const doStream = !!GEMINI_DO_STREAMING;
 		const body = buildDeepseekBody(
 			messages,
@@ -688,7 +765,7 @@
 				temperature: GEMINI_TEMPERATURE,
 				stream: doStream
 			},
-			CUSTOM_TOOL_TOGGLE ? geminiToolsToDeepseek(tools) : []
+			dsTools
 		);
 
 		const response = await fetch(DEEPSEEK_ENDPOINT, {
@@ -705,20 +782,28 @@
 		if (!response.ok) {
 			const errorText = await response.text();
 			console.error('DeepSeek API error:', response.status, errorText);
-			$streamingText += `\n[DeepSeek API error ${response.status}] ${errorText}`;
+			alert(`DeepSeek API error ${response.status}\n${errorText}`);
 			return streamingMessage;
 		}
 
+		const finalize = (result: DeepseekResult) => {
+			if (result.totalTokens > 0) tokenUsage = result.totalTokens;
+			if (result.error) {
+				console.error('DeepSeek generation error:', result.error);
+				alert(`DeepSeek error: ${result.error}`);
+			}
+			if (result.finishReason && result.finishReason !== 'stop' && result.finishReason !== 'tool_calls') {
+				console.warn('DeepSeek finish_reason:', result.finishReason);
+			}
+			streamingMessage.parts.push(...result.parts);
+		};
+
 		if (!doStream) {
-			const { parts, totalTokens } = deepseekResponseToParts(
-				await response.json(),
-				GEMINI_INCLUDE_THINKING
-			);
-			tokenUsage = totalTokens;
-			for (const part of parts) {
-				streamingMessage.parts.push(part);
+			const result = deepseekResponseToParts(await response.json());
+			for (const part of result.parts) {
 				if (part.text && !part.thought) $streamingText += part.text;
 			}
+			finalize(result);
 			scrollToBottom();
 			return streamingMessage;
 		}
@@ -726,7 +811,7 @@
 		const reader = response.body?.getReader();
 		if (!reader) throw new Error('Response body is not readable');
 		const decoder = new TextDecoder();
-		const acc = createDeepseekStreamAccumulator(GEMINI_INCLUDE_THINKING, (kind, delta) => {
+		const acc = createDeepseekStreamAccumulator((kind, delta) => {
 			if (kind === 'text') $streamingText += delta;
 		});
 		try {
@@ -738,9 +823,7 @@
 			}
 		} finally {
 			// Keep partial output on abort too
-			const { parts, totalTokens } = acc.finish();
-			if (totalTokens > 0) tokenUsage = totalTokens;
-			streamingMessage.parts.push(...parts);
+			finalize(acc.finish());
 		}
 		return streamingMessage;
 	};
@@ -997,7 +1080,9 @@
 	const handleAPI = async () => {
 		scrollToBottom();
 		// -- // Create entire context for the LLM API from the messageList
-		let context: Content[] = buildContext(messageList);
+		let context: Content[] = buildContext(messageList, {
+			keepProviderData: isDeepseekModel(GEMINI_MODEL)
+		});
 
 		console.log('target context', context);
 
@@ -1040,16 +1125,16 @@
 		if (streamingMessage.parts.length === 0) return;
 		// Merging text parts in streamingMessage parts
 		// -- // Filter if any text part
-		// DeepSeek reasoning parts stay separate (they are sent back as reasoning_content)
-		const textParts = streamingMessage.parts.filter((part) => part.text && !part.thought);
+		const textParts = streamingMessage.parts.filter((part) => part.text);
 
-		if (textParts.length > 0) {
+		// DeepSeek output is already one reasoning part + one text part (and must not be altered)
+		if (textParts.length > 0 && !isDeepseekModel(GEMINI_MODEL)) {
 			const MergedText = textParts.map((part) => part.text?.replaceAll('\\n', '\n')).join('');
 
 			const thoughtSignatures = textParts.filter((part) => part.thoughtSignature);
 
 			// Find the first text part and update its text
-			const firstTextPart = streamingMessage.parts.find((part) => part.text && !part.thought);
+			const firstTextPart = streamingMessage.parts.find((part) => part.text);
 			if (firstTextPart) {
 				firstTextPart.text = MergedText; // Update the text of the first text part
 
@@ -1062,7 +1147,7 @@
 
 			// Remove all other text parts
 			streamingMessage.parts = streamingMessage.parts.filter(
-				(part) => !part.text || part.thought || part === firstTextPart
+				(part) => !part.text || part === firstTextPart
 			);
 		}
 
@@ -1349,7 +1434,7 @@
 							bind:value={GEMINI_THINKING_LEVEL}
 							onchange={() => localStorage.setItem('GEMINI_THINKING_LEVEL', GEMINI_THINKING_LEVEL)}
 						>
-							{#each isDeepseekModel(GEMINI_MODEL) ? ['high', 'max'] : ['low', 'medium', 'high'] as level}
+							{#each isDeepseekModel(GEMINI_MODEL) ? ['low', 'high', 'max'] : ['low', 'medium', 'high'] as level}
 								<option value={level}>{level}</option>
 							{/each}
 						</select>
