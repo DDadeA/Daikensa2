@@ -277,18 +277,30 @@
 		persistMessage(message, after);
 	};
 
+	// Generated media is always the model's own message (as with a single image call)
+	const emitMediaMessage = (conversationId: string, media: any[]) => {
+		if (media.length === 0) return;
+		emitToolMessage({
+			id: randomUUID(),
+			conversation_id: conversationId,
+			role: 'model',
+			parts: media
+		});
+	};
+
 	// Results of tools that moved to the background: delivered once nothing else is going on,
 	// or attached to the next tool-return message
 	const lateDelivery = createLateDelivery({
 		isBusy: () => isMessageStreaming || foregroundTools > 0 || sendingUser,
 		retryMs: LATE_DELIVERY_RETRY_MS,
-		deliver: (conversationId, parts, sendBack) => {
+		deliver: (conversationId, { parts, media, sendBack }) => {
 			emitToolMessage({
 				id: randomUUID(),
 				conversation_id: conversationId,
 				role: 'user',
 				parts
 			});
+			emitMediaMessage(conversationId, media);
 			if (sendBack && conversationId === currentConversationID) handleAPI();
 		}
 	});
@@ -365,13 +377,16 @@
 
 			// Background results that finished in the meantime ride along with a user-side tool return
 			let sendBack = toolResult.sendBack;
+			let lateMedia: any[] = [];
 			if (resultMessage.role === 'user') {
 				const late = lateDelivery.take(conversationId);
 				resultMessage.parts?.push(...late.parts);
+				lateMedia = late.media;
 				sendBack = sendBack || late.sendBack;
 			}
 
 			emitToolMessage(resultMessage, postOriginalPromise);
+			emitMediaMessage(conversationId, lateMedia);
 
 			if (sendBack && conversationId === currentConversationID) {
 				handleAPI(); // Call the API handler to process the result message
@@ -435,6 +450,7 @@
 				},
 				postOriginalPromise
 			);
+			emitMediaMessage(conversationId, [...squeezed.media, ...late.media]);
 
 			if ((squeezed.sendBack || late.sendBack) && conversationId === currentConversationID) {
 				handleAPI();
