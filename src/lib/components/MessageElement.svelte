@@ -40,7 +40,12 @@
 				{#each message.parts || [] as part}
 					<!-- {JSON.stringify(part)} -->
 
-					{#if part.text && part.text.length > 0}
+					{#if part.deepseek?.reasoning && part.text}
+						<details class="reasoning">
+							<summary>Thinking</summary>
+							{@html marked.parse(part.text)}
+						</details>
+					{:else if part.text && part.text.length > 0}
 						{@html marked.parse(part.text)}
 					{:else if part.inlineData && part.inlineData.data}
 						{#if part.inlineData.data.startsWith('data:image') || part.inlineData.mimeType?.startsWith('image/')}
