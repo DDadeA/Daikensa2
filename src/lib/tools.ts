@@ -27,14 +27,14 @@ export const getJsTimeoutSeconds = (override?: number) => {
 	return valid(stored) ? stored : JS_TOOL_DEFAULT_TIMEOUT_SEC;
 };
 const HUD_ATTR = 'data-seulgi-hud';
-const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
+const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor as new (
 	...args: string[]
 ) => () => Promise<any>;
 
 // Handlers are provided by the page (chat UI) when it mounts
 const bridgeHandlers = {
-	sendMessage: (_text: string) => {},
-	setInput: (_text: string) => {}
+	sendMessage: (_text: string) => { },
+	setInput: (_text: string) => { }
 };
 
 export const removeAllHUDs = () => {
@@ -437,10 +437,10 @@ export const actualTool: Record<string, (params: any) => Promise<ToolResult | nu
 			seed: number;
 			selectedSize?: string;
 		} = {
-			positivePrompt: '',
-			negativePrompt: '',
-			seed: 1
-		}
+				positivePrompt: '',
+				negativePrompt: '',
+				seed: 1
+			}
 	) => {
 		return {
 			sendBack: false,
@@ -461,16 +461,16 @@ export const actualTool: Record<string, (params: any) => Promise<ToolResult | nu
 	}
 };
 
-const functionOutputLimit = 500; 
+const functionOutputLimit = 500;
 
-function convertToString(val:any) {
-  if (val === null || val === undefined) {
-    return '';
-  }
-  if (typeof val === 'object') {
-    return JSON.stringify(val);
-  }
-  return String(val);
+function convertToString(val: any) {
+	if (val === null || val === undefined) {
+		return '';
+	}
+	if (typeof val === 'object') {
+		return JSON.stringify(val);
+	}
+	return String(val);
 }
 
 
@@ -481,7 +481,7 @@ const makeFunctionResponse = (functionName: string, result: any, truncate: boole
 	if (truncate && output.length > functionOutputLimit) {
 		output = output.slice(0, functionOutputLimit) + `(${output.length - functionOutputLimit} characters are truncated.)`;
 	}
-	
+
 	return {
 		functionResponse: {
 			name: functionName,
@@ -496,8 +496,8 @@ const makeFunctionResponse = (functionName: string, result: any, truncate: boole
 export let isAskingChoice = writable<boolean>(false);
 export let choiceOptions = writable<string[]>([]);
 let choosenOption: string | null = null;
-export let handleChoice = (choice: string) => {};
-export let cancelToolAwait = () => {};
+export let handleChoice = (choice: string) => { };
+export let cancelToolAwait = () => { };
 
 export const toolConfig = {
 	// functionCallingConfig: {
