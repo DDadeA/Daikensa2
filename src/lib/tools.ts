@@ -269,11 +269,23 @@ export const tools: Tool[] = [
 	}
 ];
 
-interface ToolResult {
+export interface ToolResult {
 	sendBack: boolean;
 	role: 'user' | 'model' | undefined;
 	data: any;
 }
+
+// Tool calls of one model turn run in parallel, except calls that share global state or a remote limit:
+// the same tool runs one call at a time (NovelAI allows one generation at once, javascript patches console.log),
+// and the UI / conversation tools keep the order the model asked for.
+const SHARED_LANES: Record<string, string> = {
+	alert: 'ui',
+	choice: 'ui',
+	scratchpad: 'conversation',
+	sessionHandover: 'conversation'
+};
+export const toolLane = (name: string, index: number) =>
+	name === 'query' ? `query#${index}` : (SHARED_LANES[name] ?? name);
 
 export const actualTool: Record<string, (params: any) => Promise<ToolResult | null>> = {
 	alert: async (params: { message: string }) => {
