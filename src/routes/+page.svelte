@@ -14,6 +14,16 @@
 	import { streamingText, nai_api_key, currentConversationId, scratchpadUpdate, conversationsChanged } from '$lib/stores';
 	import { buildContext, buildSystemPrompt } from '$lib/context';
 	import { apiFetch } from '$lib/api';
+	import {
+		DEEPSEEK_ENDPOINT,
+		deepseekModelList,
+		isDeepseekModel,
+		geminiToolsToDeepseek,
+		geminiContextToDeepseek,
+		buildDeepseekBody,
+		deepseekResponseToParts,
+		createDeepseekStreamAccumulator
+	} from '$lib/deepseek';
 	import { isAskingChoice, choiceOptions, handleChoice, isRunningJs, stopJavascript } from '$lib/tools';
 
 	const defaultSystemPrompt = 'You are a helpful assistant.';
@@ -49,12 +59,13 @@
 	// let streamingText: string = ''; // Placeholder for streaming text
 
 	let GEMINI_API_KEY: string;
+	let DEEPSEEK_API_KEY: string;
 	let GEMINI_MODEL: string;
 	let GEMINI_TEMPERATURE: number;
 	let GEMINI_THINKING: boolean;
 	let GEMINI_INCLUDE_THINKING: boolean;
 	let GEMINI_THINKING_BUDGET: number;
-	let GEMINI_THINKING_LEVEL: 'low' | 'medium' | 'high';
+	let GEMINI_THINKING_LEVEL: 'low' | 'medium' | 'high' | 'max';
 	let GEMINI_SYSTEM_PROMPT: string;
 	let GEMINI_DO_STREAMING: boolean; // Toggle for streaming mode
 
@@ -100,7 +111,8 @@
 		'gemini-flash-lastest',
 		'gemini-flash-lite-lastest',
 		'gemma-4-31b-it',
-		'gemma-4-26b-a4b-it'
+		'gemma-4-26b-a4b-it',
+		...deepseekModelList
 	];
 	const isThinkingLevelModel = (modelName: string) => {
 		return modelName.startsWith('gemini-3') || modelName.startsWith('gemma-4') || modelName.startsWith('gemini-4');
@@ -144,13 +156,14 @@
 
 	const initializeFromLocalStorage = () => {
 		GEMINI_API_KEY = localStorage.getItem('GEMINI_API_KEY') || '';
+		DEEPSEEK_API_KEY = localStorage.getItem('DEEPSEEK_API_KEY') || '';
 		GEMINI_MODEL = localStorage.getItem('GEMINI_MODEL') || modelList[0];
 		GEMINI_TEMPERATURE = parseFloat(localStorage.getItem('GEMINI_TEMPERATURE') || '0.95');
 		GEMINI_THINKING = localStorage.getItem('GEMINI_THINKING') === 'true';
 		GEMINI_INCLUDE_THINKING = localStorage.getItem('GEMINI_INCLUDE_THINKING') === 'true';
 		GEMINI_THINKING_BUDGET = parseInt(localStorage.getItem('GEMINI_THINKING_BUDGET') || '512', 10);
 		GEMINI_THINKING_LEVEL =
-			(localStorage.getItem('GEMINI_THINKING_LEVEL') as 'low' | 'medium' | 'high') || 'high';
+			(localStorage.getItem('GEMINI_THINKING_LEVEL') as 'low' | 'medium' | 'high' | 'max') || 'high';
 		// GEMINI_SYSTEM_PROMPT =
 		// localStorage.getItem('GEMINI_SYSTEM_PROMPT') || 'You are a helpful assistant.';
 		currentTheme = (localStorage.getItem('theme') as 'light' | 'dark') || 'light';
@@ -660,6 +673,78 @@
 		}
 	};
 
+	const receiveDeepseek = async (context: any, streamingMessage: any) => {
+		const messages = geminiContextToDeepseek(
+			context,
+			buildSystemPrompt(GEMINI_SYSTEM_PROMPT, GEMINI_SCRATCHPAD)
+		);
+		const doStream = !!GEMINI_DO_STREAMING;
+		const body = buildDeepseekBody(
+			messages,
+			{
+				model: GEMINI_MODEL,
+				thinking: GEMINI_THINKING,
+				effort: GEMINI_THINKING_LEVEL,
+				temperature: GEMINI_TEMPERATURE,
+				stream: doStream
+			},
+			CUSTOM_TOOL_TOGGLE ? geminiToolsToDeepseek(tools) : []
+		);
+
+		const response = await fetch(DEEPSEEK_ENDPOINT, {
+			signal: abortController?.signal,
+			credentials: 'omit',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${DEEPSEEK_API_KEY}`
+			},
+			body: JSON.stringify(body),
+			method: 'POST',
+			mode: 'cors'
+		});
+		if (!response.ok) {
+			const errorText = await response.text();
+			console.error('DeepSeek API error:', response.status, errorText);
+			$streamingText += `\n[DeepSeek API error ${response.status}] ${errorText}`;
+			return streamingMessage;
+		}
+
+		if (!doStream) {
+			const { parts, totalTokens } = deepseekResponseToParts(
+				await response.json(),
+				GEMINI_INCLUDE_THINKING
+			);
+			tokenUsage = totalTokens;
+			for (const part of parts) {
+				streamingMessage.parts.push(part);
+				if (part.text && !part.thought) $streamingText += part.text;
+			}
+			scrollToBottom();
+			return streamingMessage;
+		}
+
+		const reader = response.body?.getReader();
+		if (!reader) throw new Error('Response body is not readable');
+		const decoder = new TextDecoder();
+		const acc = createDeepseekStreamAccumulator(GEMINI_INCLUDE_THINKING, (kind, delta) => {
+			if (kind === 'text') $streamingText += delta;
+		});
+		try {
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				acc.push(decoder.decode(value, { stream: true }));
+				scrollToBottom();
+			}
+		} finally {
+			// Keep partial output on abort too
+			const { parts, totalTokens } = acc.finish();
+			if (totalTokens > 0) tokenUsage = totalTokens;
+			streamingMessage.parts.push(...parts);
+		}
+		return streamingMessage;
+	};
+
 	const receive = async (context: any, streamingMessage: any, depth: number = 0) => {
 		let body = {
 			contents: context,
@@ -716,7 +801,7 @@
 		// if gemini 3.0 series, set thinkingLevel. else thinkingBudget
 		if (isThinkingLevelModel(GEMINI_MODEL)) {
 			body.generation_config.thinkingConfig = {
-				thinkingLevel: GEMINI_THINKING ? GEMINI_THINKING_LEVEL || 'high' : 'off',
+				thinkingLevel: GEMINI_THINKING ? (GEMINI_THINKING_LEVEL === 'max' ? 'high' : GEMINI_THINKING_LEVEL) || 'high' : 'off',
 				includeThoughts: GEMINI_INCLUDE_THINKING
 			};
 		} else {
@@ -926,9 +1011,13 @@
 		abortController = new AbortController();
 		let aborted = false;
 		try {
-			GEMINI_DO_STREAMING
-				? await receiveStream(context, streamingMessage)
-				: await receive(context, streamingMessage);
+			if (isDeepseekModel(GEMINI_MODEL)) {
+				await receiveDeepseek(context, streamingMessage);
+			} else {
+				GEMINI_DO_STREAMING
+					? await receiveStream(context, streamingMessage)
+					: await receive(context, streamingMessage);
+			}
 		} catch (error) {
 			if (isAbortError(error)) {
 				aborted = true;
@@ -951,7 +1040,8 @@
 		if (streamingMessage.parts.length === 0) return;
 		// Merging text parts in streamingMessage parts
 		// -- // Filter if any text part
-		const textParts = streamingMessage.parts.filter((part) => part.text);
+		// DeepSeek reasoning parts stay separate (they are sent back as reasoning_content)
+		const textParts = streamingMessage.parts.filter((part) => part.text && !part.thought);
 
 		if (textParts.length > 0) {
 			const MergedText = textParts.map((part) => part.text?.replaceAll('\\n', '\n')).join('');
@@ -959,7 +1049,7 @@
 			const thoughtSignatures = textParts.filter((part) => part.thoughtSignature);
 
 			// Find the first text part and update its text
-			const firstTextPart = streamingMessage.parts.find((part) => part.text);
+			const firstTextPart = streamingMessage.parts.find((part) => part.text && !part.thought);
 			if (firstTextPart) {
 				firstTextPart.text = MergedText; // Update the text of the first text part
 
@@ -972,7 +1062,7 @@
 
 			// Remove all other text parts
 			streamingMessage.parts = streamingMessage.parts.filter(
-				(part) => !part.text || part === firstTextPart
+				(part) => !part.text || part.thought || part === firstTextPart
 			);
 		}
 
@@ -1055,7 +1145,7 @@
 
 		if (isThinkingLevelModel(GEMINI_MODEL)) {
 			body.generation_config.thinkingConfig = {
-				thinkingLevel: GEMINI_THINKING ? GEMINI_THINKING_LEVEL || 'high' : 'off',
+				thinkingLevel: GEMINI_THINKING ? (GEMINI_THINKING_LEVEL === 'max' ? 'high' : GEMINI_THINKING_LEVEL) || 'high' : 'off',
 				includeThoughts: GEMINI_INCLUDE_THINKING
 			};
 		} else {
@@ -1254,12 +1344,12 @@
 							)}
 					/>
 					<span class="vertical-line"></span>
-					{#if isThinkingLevelModel(GEMINI_MODEL || '')}
+					{#if isDeepseekModel(GEMINI_MODEL) || isThinkingLevelModel(GEMINI_MODEL || '')}
 						<select
 							bind:value={GEMINI_THINKING_LEVEL}
 							onchange={() => localStorage.setItem('GEMINI_THINKING_LEVEL', GEMINI_THINKING_LEVEL)}
 						>
-							{#each ['low', 'medium', 'high'] as level}
+							{#each isDeepseekModel(GEMINI_MODEL) ? ['high', 'max'] : ['low', 'medium', 'high'] as level}
 								<option value={level}>{level}</option>
 							{/each}
 						</select>
@@ -1345,6 +1435,14 @@
 						placeholder="API_KEY"
 						bind:value={GEMINI_API_KEY}
 						oninput={() => localStorage.setItem('GEMINI_API_KEY', GEMINI_API_KEY)}
+					/>
+					<br />
+					<span>DEEPSEEK_API_KEY</span>
+					<input
+						type="password"
+						placeholder="DEEPSEEK_API_KEY"
+						bind:value={DEEPSEEK_API_KEY}
+						oninput={() => localStorage.setItem('DEEPSEEK_API_KEY', DEEPSEEK_API_KEY)}
 					/>
 					<br />
 					<span>NAI_API_KEY</span>
