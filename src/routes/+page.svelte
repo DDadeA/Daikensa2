@@ -10,7 +10,16 @@
 		FunctionCallingConfigMode
 	} from '@google/genai';
 	import type { Part, Content } from '@google/genai';
-	import { tools, actualTool, cancelToolAwait, installSeulgiBridge } from '$lib/tools';
+	import { tools, actualTool, cancelToolAwait, installSeulgiBridge, toolLane } from '$lib/tools';
+	import type { ToolResult } from '$lib/tools';
+	import {
+		TOOL_BATCH_GRACE_MS,
+		LATE_DELIVERY_RETRY_MS,
+		runBatch,
+		squeezeOutcomes,
+		lateItemFrom,
+		createLateDelivery
+	} from '$lib/toolBatch';
 	import { streamingText, nai_api_key, currentConversationId, scratchpadUpdate, conversationsChanged } from '$lib/stores';
 	import { buildContext, buildSystemPrompt } from '$lib/context';
 	import { apiFetch } from '$lib/api';
@@ -49,6 +58,13 @@
 		(error instanceof DOMException || error instanceof Error) && error.name === 'AbortError';
 	const stopGeneration = () => abortController?.abort();
 	let JS_TOOL_TIMEOUT_SEC = 300;
+
+	// Tool / background bookkeeping (see $lib/toolBatch)
+	let foregroundTools = 0; // tool executions the next model turn is waiting for
+	let batchWaiting = 0; // parallel tool batches still inside their grace window
+	let sendingUser = false; // a user message is being composed/sent
+	let bgTaskCount = 0; // tools running in the background
+	let bgSeq = 0;
 
 	let conversationList: Array<Conversation> = [];
 	let currentConversationID: string = '';
@@ -232,12 +248,57 @@
 			});
 	};
 
-	const handleToolUse = async (part: any, postOriginalPromise: Promise<void>) => {
+	// Messages are saved strictly one after another so their order in the DB matches the chat
+	let persistTail: Promise<unknown> = Promise.resolve();
+	const persistMessage = (message: Message, after?: Promise<unknown>) => {
+		const body = JSON.stringify(message);
+		const task = persistTail
+			.then(() => after)
+			.catch(() => {})
+			.then(() =>
+				apiFetch(`/api/message`, {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json'
+					},
+					body
+				})
+			);
+		persistTail = task.catch((error) => console.error('Error saving message:', error));
+		return task;
+	};
+
+	// Shows a tool-return message (only while its conversation is on screen) and saves it
+	const emitToolMessage = (message: Message, after?: Promise<unknown>) => {
+		if (message.conversation_id === currentConversationID) {
+			messageList = [...messageList, { ...message }];
+			scrollToBottom();
+		}
+		persistMessage(message, after);
+	};
+
+	// Results of tools that moved to the background: delivered once nothing else is going on,
+	// or attached to the next tool-return message
+	const lateDelivery = createLateDelivery({
+		isBusy: () => isMessageStreaming || foregroundTools > 0 || sendingUser,
+		retryMs: LATE_DELIVERY_RETRY_MS,
+		deliver: (conversationId, parts, sendBack) => {
+			emitToolMessage({
+				id: randomUUID(),
+				conversation_id: conversationId,
+				role: 'user',
+				parts
+			});
+			if (sendBack && conversationId === currentConversationID) handleAPI();
+		}
+	});
+
+	// Runs one tool call. Returns null when the tool intentionally gives no response.
+	const executeToolCall = async (part: any): Promise<ToolResult | null> => {
 		// @ts-ignore
 		const functionName = part.functionCall.name as keyof typeof actualTool;
 		if (!actualTool[functionName]) {
-			console.error(`Function ${functionName} is not defined in actualTool`);
-			return; // Skip if the function is not defined
+			throw new Error(`Function ${functionName} is not defined in actualTool`);
 		}
 
 		// Call the actual tool function
@@ -268,40 +329,118 @@
 			};
 		}
 
-		if (toolResult == null) {
-			console.warn(`Function ${functionName} intentionally returned null. Skipping response.`);
-			return; // Skip sending a response if the function returned null
+		return toolResult;
+	};
+
+	// One tool call: its result is its own message
+	const handleToolUse = async (part: any, postOriginalPromise: Promise<unknown>) => {
+		// @ts-ignore
+		const functionName = part.functionCall.name as keyof typeof actualTool;
+		if (!actualTool[functionName]) {
+			console.error(`Function ${functionName} is not defined in actualTool`);
+			return; // Skip if the function is not defined
 		}
 
-		//  handle the result here, send it back to the LLM
+		const conversationId = currentConversationID;
+		foregroundTools++;
+		try {
+			const toolResult = await executeToolCall(part);
 
-		// Append the result to the streaming message content
-		const resultMessage: Message = {
-			id: randomUUID(),
-			conversation_id: currentConversationID,
-			role: toolResult.role || 'user',
-			parts: [
-				toolResult.data as any // Assuming toolResult is of type Part
-			]
-		};
+			if (toolResult == null) {
+				console.warn(`Function ${functionName} intentionally returned null. Skipping response.`);
+				return; // Skip sending a response if the function returned null
+			}
 
-		messageList = [...messageList, { ...resultMessage }];
+			//  handle the result here, send it back to the LLM
 
-		// POST the result message to the API
-		await postOriginalPromise; // Ensure the original message is posted first
+			// Append the result to the streaming message content
+			const resultMessage: Message = {
+				id: randomUUID(),
+				conversation_id: conversationId,
+				role: toolResult.role || 'user',
+				parts: [
+					toolResult.data as any // Assuming toolResult is of type Part
+				]
+			};
 
-		apiFetch(`/api/message`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json'
-			},
-			body: JSON.stringify(resultMessage)
-		});
+			// Background results that finished in the meantime ride along with a user-side tool return
+			let sendBack = toolResult.sendBack;
+			if (resultMessage.role === 'user') {
+				const late = lateDelivery.take(conversationId);
+				resultMessage.parts?.push(...late.parts);
+				sendBack = sendBack || late.sendBack;
+			}
 
-		scrollToBottom();
+			emitToolMessage(resultMessage, postOriginalPromise);
 
-		if (toolResult.sendBack) {
-			handleAPI(); // Call the API handler to process the result message
+			if (sendBack && conversationId === currentConversationID) {
+				handleAPI(); // Call the API handler to process the result message
+			}
+		} finally {
+			foregroundTools--;
+		}
+	};
+
+	// Several tool calls at once: run them together, wait a moment, answer them with ONE user message.
+	// Calls that are still running move to the background and report back later.
+	const handleToolBatch = async (parts: any[], postOriginalPromise: Promise<unknown>) => {
+		const conversationId = currentConversationID;
+		const startedAt = Date.now();
+		const calls = parts.map((part) => ({ name: part.functionCall.name as string }));
+
+		foregroundTools++;
+		try {
+			batchWaiting++;
+			let outcomes;
+			try {
+				outcomes = await runBatch(
+					parts.map((part, i) => ({
+						lane: toolLane(part.functionCall.name, i),
+						run: () => executeToolCall(part)
+					})),
+					TOOL_BATCH_GRACE_MS
+				);
+			} finally {
+				batchWaiting--;
+			}
+
+			const squeezed = squeezeOutcomes(
+				calls,
+				outcomes,
+				TOOL_BATCH_GRACE_MS,
+				() => `bg-${++bgSeq}`
+			);
+
+			outcomes.forEach((outcome, i) => {
+				const taskId = squeezed.taskIds[i];
+				if (outcome.status !== 'background' || !taskId) return;
+				bgTaskCount++;
+				outcome.settled.then((settled) => {
+					bgTaskCount--;
+					const item = lateItemFrom(
+						{ taskId, name: calls[i].name, conversationId, elapsedMs: Date.now() - startedAt },
+						settled
+					);
+					if (item) lateDelivery.push(item);
+				});
+			});
+
+			const late = lateDelivery.take(conversationId);
+			emitToolMessage(
+				{
+					id: randomUUID(),
+					conversation_id: conversationId,
+					role: 'user',
+					parts: [...squeezed.parts, ...late.parts]
+				},
+				postOriginalPromise
+			);
+
+			if ((squeezed.sendBack || late.sendBack) && conversationId === currentConversationID) {
+				handleAPI();
+			}
+		} finally {
+			foregroundTools--;
 		}
 	};
 
@@ -534,7 +673,20 @@
 			console.warn('Message is currently being streamed. Please wait.');
 			return; // Prevent sending a new message while streaming
 		}
+		if (batchWaiting > 0) {
+			console.warn('Tool calls are still being collected. Please wait a moment.');
+			return; // A message now would land between the tool calls and their answers
+		}
 
+		sendingUser = true;
+		try {
+			await composeAndSend();
+		} finally {
+			sendingUser = false;
+		}
+	};
+
+	const composeAndSend = async () => {
 		cancelToolAwait();
 		inputMessage = inputMessage.trim();
 
@@ -1156,21 +1308,14 @@
 		}
 		messageList = [...messageList, { ...streamingMessage }];
 
-		const postOriginalPromise = apiFetch(`/api/message`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json'
-			},
-			body: JSON.stringify({ ...streamingMessage })
-		});
+		const postOriginalPromise = persistMessage({ ...streamingMessage });
 
-		for (const part of streamingMessage.parts) {
-			if (!part.functionCall?.name) {
-				continue;
-			}
-
-			// Handle the function call here, e.g., execute the function or log it
-			await handleToolUse(part, postOriginalPromise); // Call the function to handle tool usage
+		// One call keeps its own result message; several are answered together in one message
+		const toolCalls = streamingMessage.parts.filter((part) => part.functionCall?.name);
+		if (toolCalls.length === 1) {
+			await handleToolUse(toolCalls[0], postOriginalPromise);
+		} else if (toolCalls.length > 1) {
+			await handleToolBatch(toolCalls, postOriginalPromise);
 		}
 	};
 
@@ -1632,6 +1777,12 @@
 			}}>+</button
 		>
 		<textarea placeholder="메시지 입력" bind:value={inputMessage}></textarea>
+		{#if bgTaskCount > 0}
+			<span
+				title="Tools running in the background"
+				style="align-self: center; font-size: 0.9em; opacity: 0.8;">⏳ {bgTaskCount}</span
+			>
+		{/if}
 		{#if isMessageStreaming || $isRunningJs}
 			<button
 				id="stop-button"
